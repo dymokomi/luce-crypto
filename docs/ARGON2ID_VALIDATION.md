@@ -81,8 +81,34 @@ quick suite, generated-C ASan/UBSan, the eight larger-memory Argon2id derivation
 18 extended SHA-2 file cases and the pinned independent reference fixture check.
 Logs: ignored `build/final-argon-correctness.log`, `final-argon-sanitize.log`,
 `final-argon-extended.log` and `argon-hash-extended.log`. Python 3.14.6; both compiler
-source pins are unchanged. This document does not claim hosted CI or VPS success
-for this new source yet.
+source pins are unchanged.
+
+Source `52bd2003bd982c35aff49341e72b69b757be3f43` passed
+[CI 34939168775](https://github.com/dymokomi/luce-crypto/actions/runs/34939168775)
+on Linux x86_64 (6m45s) and macOS arm64 (4m43s). Both downloaded platform logs
+contain all six mode passes, 17 harness tests, all old/new oracle corpora, native/
+Luce/failure/worker cases, ASan/UBSan, 18 extended SHA-2 files, the eight extended
+Argon2id derivations and pinned reference regeneration. Python 3.14.7; corpus
+hashes match local 3.14.6. The generated-code probe passed on both architectures.
+
+The local macOS bundle passed all 17 harness tests and the complete quick suite
+after extraction into a fresh, separate temporary directory. All 34 regular
+allowlisted members, 33 content hashes and source revision were verified. That
+temporary extraction was removed; the original archive remains reproducible.
+
+The CI Linux bundle has SHA-256
+`4330286a2dac1977c980e1941496709713781111e6cf3291adbea187ee494ca3`.
+Its 34 regular allowlisted members, 33 hashes, revision, modes and size limits
+were verified locally; all 11 executables have ELF64 little-endian x86_64 headers.
+The same checks passed on the isolated host before execution. The complete quick
+suite and all 17 harness tests passed there (Python 3.12.3) in 68.228 seconds
+elapsed / 16.969 seconds CPU, with identical corpus hashes. The sandbox enforced
+private networking, a read-only host/input bind, 512 MiB maximum memory, no swap,
+25% CPU, 64 tasks and 180 seconds. The 64/256 MiB extended cases remained
+local/CI-only. No package installation, public listener or live configuration
+change occurred. After confirming the unit had exited and was inactive, only its
+verified temporary stage was removed. Existing hosted applications and the reverse
+proxy were left unchanged. Ignored evidence is retained under `build/ci-34939168775/`.
 
 Generated Base C, native-opt-3 and C-O2 Argon2 call-site assemblies are retained
 with hashes under ignored `build/codegen`. Local arm64 inspection shows matrix
@@ -90,6 +116,8 @@ wiping before allocator release, joins on both success and partial-spawn-error
 paths, and seed/final-block cleanup on error returns. This is a scoped observation,
 not whole-library/helper dataflow or side-channel review. The existing noinline
 defect still reproduces; neither language repository was modified.
+The Linux native-opt-3 and C-O2 matrix-release bodies likewise retain the wipe call
+before the allocator call, and native success/error call sites retain worker joins.
 
 Not yet covered: TSan, independent security review, statistical timing analysis,
 production KDF calibration/aggregate admission, persistent worker pool, vault/PHC
