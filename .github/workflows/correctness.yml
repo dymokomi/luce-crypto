@@ -1,0 +1,79 @@
+name: Native SHA-2 correctness
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  correctness:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: luce-crypto
+      - name: Read compiler pins
+        id: pins
+        shell: bash
+        run: |
+          echo "base=$(tr -d '\n' < luce-crypto/bootstrap/BASE)" >> "$GITHUB_OUTPUT"
+          echo "luce=$(tr -d '\n' < luce-crypto/bootstrap/LUCE)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          repository: dymokomi/luce-base
+          ref: ${{ steps.pins.outputs.base }}
+          path: luce-base
+      - uses: actions/checkout@v4
+        with:
+          repository: dymokomi/luce
+          ref: ${{ steps.pins.outputs.luce }}
+          path: luce
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Bootstrap without language source changes
+        working-directory: luce-crypto
+        run: python3 tools/bootstrap.py
+      - name: All six modes and real Luce consumer
+        working-directory: luce-crypto
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 tests/run.py 2>&1 | tee build/correctness.log
+      - name: Memory safety instrumentation
+        working-directory: luce-crypto
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 tests/sanitize.py 2>&1 | tee build/sanitize.log
+      - name: Larger bounded file streams
+        working-directory: luce-crypto
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 tests/check_hashes.py build/native3/driver build/native3/file-driver --full 2>&1 | tee build/extended.log
+      - name: Bundle Linux tests
+        if: runner.os == 'Linux'
+        working-directory: luce-crypto
+        run: python3 tools/test_bundle.py --output build/luce-crypto-smoke-x86_64-linux.tar.gz
+      - name: Upload Linux test bundle
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: luce-crypto-smoke-x86_64-linux
+          path: luce-crypto/build/luce-crypto-smoke-x86_64-linux.tar.gz
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: crypto-tests-${{ matrix.os }}
+          path: |
+            luce-crypto/build/correctness.log
+            luce-crypto/build/sanitize.log
+            luce-crypto/build/extended.log
+            luce-crypto/build/failures/

@@ -1,0 +1,25 @@
+import crypto_native as sha2
+import files
+import c
+
+pub func main(arguments: str[]) -> i32!:
+    assert(arguments.length == 3)
+    var file = try files.File.open((c.str)arguments[2])
+    defer file.destroy()
+    var state = try sha2.make_hash(arguments[1])
+    var input: u8[32768]
+    var total: u64
+    while true:
+        let count = try file.read(input)
+        if count == 0: break
+        try state.update(input[..<count])
+        total += (u64)count
+    var digest: u8[64]
+    var text: u8[128]
+    let count = try state.digest(digest)
+    let digits = b"0123456789abcdef"
+    for i in 0..<count:
+        text[i * 2] = digits[(usize)(digest[i] >> 4)]
+        text[i * 2 + 1] = digits[(usize)(digest[i] & 15)]
+    print(f"OK {total} {(str)text[..<count * 2]}")
+    return 0

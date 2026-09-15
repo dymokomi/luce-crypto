@@ -1,0 +1,27 @@
+from crypto import Hasher, digest
+
+pub func main(arguments: list[str]) -> int!:
+    let state = Hasher()
+    state.update(b"a")
+    let first = state.digest()
+    assert(first.hexdigest() == "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb")
+    state.update(b"bc")
+    let result = state.digest()
+    assert(result.hexdigest() == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+    let saved_bytes = result.bytes()
+    let saved_text = result.hexdigest()
+    result.close()
+    result.close()
+    state.reset()
+    assert(state.digest().hexdigest() == digest(b"").hexdigest())
+    state.close()
+    assert(saved_bytes.length == 32 and saved_text.length == 64)
+    assert(saved_text == digest(b"abc").hexdigest())
+    assert(first.hexdigest() == digest(b"a").hexdigest())
+    for algorithm in ["sha256", "sha384", "sha512"]:
+        let hasher = Hasher(algorithm)
+        hasher.update(b"binary\x00\xffinput")
+        assert(hasher.digest().bytes() == digest(b"binary\x00\xffinput", algorithm).bytes())
+        hasher.close()
+    print("PASS Luce hash API, incremental snapshots, reset, retained bytes/text and disposal")
+    return 0

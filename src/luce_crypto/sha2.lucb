@@ -1,0 +1,208 @@
+## Byte-oriented SHA-256/384/512, implemented directly from FIPS 180-4.
+## Value state: no allocation, borrowed pointers, global mutable state or FFI.
+import luce_crypto.constants as constants
+
+pub let invalid: ErrorCode = ErrorCode.package(1)
+pub let closed: ErrorCode = ErrorCode.package(2)
+pub let length_exceeded: ErrorCode = ErrorCode.package(3)
+
+func r32(x: u32, n: u32) -> u32:
+    return (x >> n) | (x << (32 - n))
+
+func r64(x: u64, n: u64) -> u64:
+    return (x >> n) | (x << (64 - n))
+
+func block32(state: u32[], input: const u8[]):
+    var w: u32[64]
+    for i in 0..<(usize)16:
+        let j = i * 4
+        w[i] = ((u32)input[j] << 24) | ((u32)input[j + 1] << 16) | ((u32)input[j + 2] << 8) | (u32)input[j + 3]
+    for i in (usize)16..<(usize)64:
+        let x = w[i - 15]
+        let y = w[i - 2]
+        w[i] = w[i - 16] +% (r32(x, 7) ^ r32(x, 18) ^ (x >> 3)) +% w[i - 7] +% (r32(y, 17) ^ r32(y, 19) ^ (y >> 10))
+    var a = state[0]
+    var b = state[1]
+    var c = state[2]
+    var d = state[3]
+    var e = state[4]
+    var f = state[5]
+    var g = state[6]
+    var h = state[7]
+    for i in 0..<(usize)64:
+        let t1 = h +% (r32(e, 6) ^ r32(e, 11) ^ r32(e, 25)) +% ((e & f) ^ (~e & g)) +% constants.k32[i] +% w[i]
+        let t2 = (r32(a, 2) ^ r32(a, 13) ^ r32(a, 22)) +% ((a & b) ^ (a & c) ^ (b & c))
+        h = g
+        g = f
+        f = e
+        e = d +% t1
+        d = c
+        c = b
+        b = a
+        a = t1 +% t2
+    state[0] +%= a
+    state[1] +%= b
+    state[2] +%= c
+    state[3] +%= d
+    state[4] +%= e
+    state[5] +%= f
+    state[6] +%= g
+    state[7] +%= h
+
+func block64(state: u64[], input: const u8[]):
+    var w: u64[80]
+    for i in 0..<(usize)16:
+        var value: u64
+        for j in 0..<(usize)8: value = (value << 8) | (u64)input[i * 8 + j]
+        w[i] = value
+    for i in (usize)16..<(usize)80:
+        let x = w[i - 15]
+        let y = w[i - 2]
+        w[i] = w[i - 16] +% (r64(x, 1) ^ r64(x, 8) ^ (x >> 7)) +% w[i - 7] +% (r64(y, 19) ^ r64(y, 61) ^ (y >> 6))
+    var a = state[0]
+    var b = state[1]
+    var c = state[2]
+    var d = state[3]
+    var e = state[4]
+    var f = state[5]
+    var g = state[6]
+    var h = state[7]
+    for i in 0..<(usize)80:
+        let t1 = h +% (r64(e, 14) ^ r64(e, 18) ^ r64(e, 41)) +% ((e & f) ^ (~e & g)) +% constants.k64[i] +% w[i]
+        let t2 = (r64(a, 28) ^ r64(a, 34) ^ r64(a, 39)) +% ((a & b) ^ (a & c) ^ (b & c))
+        h = g
+        g = f
+        f = e
+        e = d +% t1
+        d = c
+        c = b
+        b = a
+        a = t1 +% t2
+    state[0] +%= a
+    state[1] +%= b
+    state[2] +%= c
+    state[3] +%= d
+    state[4] +%= e
+    state[5] +%= f
+    state[6] +%= g
+    state[7] +%= h
+
+## Internal length arithmetic is factored for synthetic boundary tests. Counts
+## are bytes; reject before mutation rather than silently wrap the bit length.
+pub struct Length:
+    pub var low: u64
+    pub var high: u64
+
+pub func add_length(current: Length, count: u64, small: bool) -> Length!:
+    let low = current.low +% count
+    let carry: u64 = 1 if low < current.low else 0
+    let high = current.high +% carry
+    if high < current.high or high > 0x1fffffffffffffff:
+        error(length_exceeded, "SHA-512 family message must be less than 2^128 bits")
+    if small and (high != 0 or low > 0x1fffffffffffffff):
+        error(length_exceeded, "SHA-256 message must be less than 2^64 bits")
+    return Length(low = low, high = high)
+
+pub func write_bit_length(length: Length, output: u8[]):
+    assert(output.length == 8 or output.length == 16)
+    let low = length.low << 3
+    let high = (length.high << 3) | (length.low >> 61)
+    for i in 0..<(usize)8:
+        output[output.length - 1 - i] = (u8)(low >> (i * 8))
+        if output.length == 16: output[7 - i] = (u8)(high >> (i * 8))
+
+pub struct Hash:
+    var h32: u32[8]
+    var h64: u64[8]
+    var buffer: u8[128]
+    var used: usize
+    var length: Length
+    var kind: i64
+    var disposed: bool = true
+
+    pub func digest_size() -> usize!:
+        if self.disposed: error(closed, "hash is closed or uninitialized")
+        return (usize)(self.kind // 8)
+
+    func block_size() -> usize:
+        return 64 if self.kind == 256 else 128
+
+    mutating func block(input: const u8[]):
+        if self.kind == 256: block32(self.h32, input)
+        else: block64(self.h64, input)
+
+    pub mutating func update(input: const u8[]) -> !:
+        if self.disposed: error(closed, "hash is closed or uninitialized")
+        let length = try add_length(self.length, (u64)input.length, self.kind == 256)
+        let size = self.block_size()
+        var at: usize
+        if self.used != 0:
+            let take = size - self.used if size - self.used < input.length else input.length
+            for i in 0..<take: self.buffer[self.used + i] = input[i]
+            self.used += take
+            at = take
+            if self.used == size:
+                self.block(self.buffer[..<size])
+                self.used = 0
+        while input.length - at >= size:
+            self.block(input[at..<at + size])
+            at += size
+        for i in at..<input.length:
+            self.buffer[self.used] = input[i]
+            self.used += 1
+        self.length = length
+
+    ## Snapshot digest: repeated calls and further updates are allowed. Only
+    ## the digest prefix of output is written; failure leaves output unchanged.
+    pub func digest(output: u8[]) -> usize!:
+        let count = try self.digest_size()
+        if output.length < count: error(invalid, "digest output buffer is too small")
+        var copy = self
+        let size = copy.block_size()
+        let tail: usize = 8 if copy.kind == 256 else 16
+        copy.buffer[copy.used] = 128
+        copy.used += 1
+        if copy.used > size - tail:
+            for i in copy.used..<size: copy.buffer[i] = 0
+            copy.block(copy.buffer[..<size])
+            copy.used = 0
+        for i in copy.used..<size - tail: copy.buffer[i] = 0
+        write_bit_length(copy.length, copy.buffer[size - tail..<size])
+        copy.block(copy.buffer[..<size])
+        for i in 0..<count:
+            if copy.kind == 256: output[i] = (u8)(copy.h32[i // 4] >> ((3 - i % 4) * 8))
+            else: output[i] = (u8)(copy.h64[i // 8] >> ((7 - i % 8) * 8))
+        return count
+
+    pub mutating func reset() -> !:
+        if self.disposed: error(closed, "hash is closed or uninitialized")
+        let kind = self.kind
+        self = initialize(kind)
+
+    ## Logical disposal only. Not a guaranteed secret-erasure operation.
+    pub mutating func close():
+        self = Hash()
+
+func initialize(kind: i64) -> Hash:
+    var state = Hash(kind = kind, disposed = false)
+    if kind == 256:
+        state.h32 = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19]
+    elif kind == 384:
+        state.h64 = [0xcbbb9d5dc1059ed8, 0x629a292a367cd507, 0x9159015a3070dd17, 0x152fecd8f70e5939,
+                     0x67332667ffc00b31, 0x8eb44a8768581511, 0xdb0c2e0d64f98fa7, 0x47b5481dbefa4fa4]
+    else:
+        state.h64 = [0x6a09e667f3bcc908, 0xbb67ae8584caa73b, 0x3c6ef372fe94f82b, 0xa54ff53a5f1d36f1,
+                     0x510e527fade682d1, 0x9b05688c2b3e6c1f, 0x1f83d9abfb41bd6b, 0x5be0cd19137e2179]
+    return state
+
+pub func make_hash(algorithm: str = "sha256") -> Hash!:
+    if algorithm == "sha256": return initialize(256)
+    if algorithm == "sha384": return initialize(384)
+    if algorithm == "sha512": return initialize(512)
+    error(invalid, "expected sha256, sha384 or sha512")
+
+pub func digest(input: const u8[], output: u8[], algorithm: str = "sha256") -> usize!:
+    var state = try make_hash(algorithm)
+    if output.length < (try state.digest_size()): error(invalid, "digest output buffer is too small")
+    try state.update(input)
+    return try state.digest(output)

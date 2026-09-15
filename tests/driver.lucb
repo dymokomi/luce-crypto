@@ -1,0 +1,83 @@
+## Test-only length-delimited vectors supplied by NIST/Python, no crypto FFI.
+import crypto_native as sha2
+import files
+import memory
+import c
+
+struct Reader:
+    var bytes: const u8[]
+    var position: usize
+
+    mutating func take(count: usize) -> const u8[]:
+        assert(count <= self.bytes.length - self.position)
+        let start = self.position
+        self.position += count
+        return self.bytes[start..<self.position]
+
+    mutating func number() -> usize:
+        let data = self.take(4)
+        var value: u32
+        for i in 0..<(usize)4: value |= (u32)data[i] << (i * 8)
+        return (usize)value
+
+func check(reader: Reader*) -> !:
+    let identity = reader.number()
+    let kind = reader.number()
+    let size = reader.number()
+    assert((kind == 256 or kind == 384 or kind == 512) and size <= 1048576)
+    let algorithm = "sha256" if kind == 256 else ("sha384" if kind == 384 else "sha512")
+    let data = reader.take(size)
+    let expected = reader.take(kind // 8)
+    let prefix = reader.take(kind // 8)
+    print(f"CASE {identity}")
+    var output: u8[66]
+    for i in 0..<66: output[i] = 173
+    let count = try sha2.digest(data, output[1..], algorithm)
+    assert(count == expected.length and output[0] == 173)
+    for i in 0..<count: assert(output[i + 1] == expected[i])
+    for i in count + 1..<66: assert(output[i] == 173)
+    for offered in [(usize)1, 7, 64, 127, 257, 4096]:
+        if size > 512 and offered < 257: continue
+        var state = try sha2.make_hash(algorithm)
+        var at: usize
+        var borrowed: u8[4098]
+        while at < size:
+            let take = offered if offered < size - at else size - at
+            for i in 0..<take: borrowed[i + 1] = data[at + i]
+            borrowed[0] = 173
+            borrowed[take + 1] = 174
+            try state.update(borrowed[1..<take + 1])
+            assert(borrowed[0] == 173 and borrowed[take + 1] == 174)
+            for i in 0..<take:
+                assert(borrowed[i + 1] == data[at + i])
+                borrowed[i + 1] = 221
+            try state.update(b"")
+            at += take
+        discard(try state.digest(output))
+        for i in 0..<count: assert(output[i] == expected[i])
+    var state = try sha2.make_hash(algorithm)
+    try state.update(data[..<size // 2])
+    discard(try state.digest(output))
+    for i in 0..<count: assert(output[i] == prefix[i])
+    var copy = state
+    try state.update(data[size // 2..])
+    discard(try state.digest(output))
+    for i in 0..<count: assert(output[i] == expected[i])
+    discard(try copy.digest(output))
+    for i in 0..<count: assert(output[i] == prefix[i])
+    try copy.update(data[size // 2..])
+    discard(try copy.digest(output))
+    for i in 0..<count: assert(output[i] == expected[i])
+
+pub func main(arguments: str[]) -> i32!:
+    assert(arguments.length == 2)
+    let data = try files.read_limit((c.str)arguments[1], 16777216)
+    defer free(data) in memory.heap
+    var reader = Reader(bytes = data)
+    assert((str)reader.take(8) == "LCSHA01\0")
+    let count = reader.number()
+    assert(count > 0 and count <= 128)
+    for i in 0..<count: try check(&reader)
+    assert(reader.position == data.length)
+    print(f"PASS batch {count}")
+    return 0

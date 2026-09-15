@@ -1,0 +1,65 @@
+## Owning Luce API for public-content hashing. Not yet a secret-buffer API.
+import interop
+import memory
+import luce_crypto.sha2 as sha2
+
+pub let invalid = sha2.invalid
+pub let closed = sha2.closed
+pub let length_exceeded = sha2.length_exceeded
+
+pub struct Digest:
+    var data: u8[64]
+    var text: u8[128]
+    var used: usize
+    var disposed: bool
+
+    pub func bytes() -> const u8[]!:
+        if self.disposed: error(closed, "digest is closed")
+        return self.data[..<self.used]
+
+    pub func hexdigest() -> str!:
+        if self.disposed: error(closed, "digest is closed")
+        return (str)self.text[..<self.used * 2]
+
+    pub mutating func close():
+        self = Digest(disposed = true)
+
+pub let digest_type: interop.Type[Digest] = interop.Type[Digest]("Digest", Digest.close, closeable = true)
+
+func snapshot(state: sha2.Hash) -> interop.Reference[Digest]!:
+    discard(try state.digest_size())
+    var reservation = try interop.Reservation[Digest](digest_type)
+    errdefer reservation.cancel()
+    let result = try new Digest() in memory.heap
+    errdefer free(result) in memory.heap
+    result.used = try state.digest(result.data)
+    let digits = b"0123456789abcdef"
+    for i in 0..<result.used:
+        result.text[i * 2] = digits[(usize)(result.data[i] >> 4)]
+        result.text[i * 2 + 1] = digits[(usize)(result.data[i] & 15)]
+    return reservation.publish(result, memory.heap)
+
+pub struct Hasher:
+    var state: sha2.Hash
+
+    pub func init(algorithm: str = "sha256") -> !:
+        self.state = try sha2.make_hash(algorithm)
+
+    pub mutating func update(input: const u8[]) -> !:
+        try self.state.update(input)
+
+    pub func digest() -> interop.Reference[Digest]!:
+        return try snapshot(self.state)
+
+    pub mutating func reset() -> !:
+        try self.state.reset()
+
+    pub mutating func close():
+        self.state.close()
+
+pub let hasher_type: interop.Type[Hasher] = interop.Type[Hasher]("Hasher", Hasher.close, closeable = true)
+
+pub func digest(input: const u8[], algorithm: str = "sha256") -> interop.Reference[Digest]!:
+    var state = try sha2.make_hash(algorithm)
+    try state.update(input)
+    return try snapshot(state)

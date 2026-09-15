@@ -1,0 +1,7 @@
+[package]
+name = "luce_crypto"
+source = "src"
+
+[exports]
+crypto = "luce_crypto.crypto"
+crypto_native = "luce_crypto.native"

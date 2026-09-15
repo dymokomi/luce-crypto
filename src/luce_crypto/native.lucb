@@ -1,0 +1,13 @@
+## Public native facade; arithmetic/test helpers are not exported here.
+import luce_crypto.sha2 as sha2
+
+pub type Hash = sha2.Hash
+pub let invalid = sha2.invalid
+pub let closed = sha2.closed
+pub let length_exceeded = sha2.length_exceeded
+
+pub func make_hash(algorithm: str = "sha256") -> Hash!:
+    return try sha2.make_hash(algorithm)
+
+pub func digest(input: const u8[], output: u8[], algorithm: str = "sha256") -> usize!:
+    return try sha2.digest(input, output, algorithm)
