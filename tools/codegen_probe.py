@@ -59,6 +59,18 @@ def main():
         excerpts = "\n".join(body(assembly_text, symbol) for symbol in SYMBOLS)
         (output / f"bodies-{mode}.s").write_text(excerpts)
         report["assemblies"][mode] = hashlib.sha256(assembly.read_bytes()).hexdigest()
+    # Retain actual Argon2 call sites, not only isolated primitive bodies. These
+    # files enable review; presence/compilation is not a timing or erasure proof.
+    argon_source = ROOT / "src/luce_crypto/argon2_tests.lucb"
+    argon_c = output / "argon.c"
+    emit(argon_source, ["--emit=c"], argon_c)
+    argon_native = output / "argon-native3.s"
+    emit(argon_source, ["--native", "--opt", "3", "--emit=asm"], argon_native)
+    argon_assembly = output / "argon-c-O2.s"
+    run([os.environ.get("CC", "cc"), "-std=gnu11", "-w", "-fno-strict-aliasing", "-O2",
+         "-I", ROOT.parent / "luce-base/runtime", "-S", argon_c, "-o", argon_assembly])
+    report["argon_callsite_artifacts"] = {path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+                                          for path in (argon_c, argon_native, argon_assembly)}
     (output / "report.json").write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report, indent=2), flush=True)
     print("PASS memory probe body retention and volatile C qualifiers (not a side-channel proof)", flush=True)

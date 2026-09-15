@@ -1,0 +1,218 @@
+## The matrix allocator is intercepted independently; memory.heap is NEVER
+## replaced while workers run. Globals below are test-only coordination state.
+import luce_crypto.argon2id as argon
+import luce_crypto.sha2 as errors
+import luce_crypto.secure as secure
+import memory
+import thread
+
+var completed: @u32
+var successful: usize
+var attempts: usize
+var refuse_at: usize
+var test_request: argon.Cancellation
+var cancel_in_worker: bool
+var cancel_after_pass: bool
+var observed_passes: usize
+
+func no_entry(context: void*?):
+    discard(context)
+    trap("missing test worker")
+
+var real_entry: func(void*?) -> unit = no_entry
+
+func tracked_entry(context: void*?):
+    if cancel_in_worker: test_request.request()
+    real_entry(context)
+    discard(completed.add(1, .release))
+
+func tracked_spawn(entry: func(void*?) -> unit, context: void*?) -> thread.Handle!:
+    attempts += 1
+    if attempts == refuse_at: error(thread.failed, "injected worker start failure")
+    if attempts == 1: real_entry = entry
+    let handle = try thread.spawn(tracked_entry, context, stack = 524288)
+    successful += 1
+    return handle
+
+func observe_pass(pass: usize, matrix: const u64[]):
+    assert(pass == observed_passes and matrix.length > 0)
+    observed_passes += 1
+    if cancel_after_pass: test_request.request()
+
+struct Audit: memory.Allocator:
+    var parent: memory.Allocator
+    var address: u8*?
+    var size: usize
+    var allocations: usize
+    var releases: usize
+    var refuse: bool
+
+    pub mutating func allocate(size: usize, alignment: usize) -> u8[]?:
+        self.allocations += 1
+        assert(self.address == none)
+        if self.refuse: return none
+        let bytes = self.parent.allocate(size, alignment) else trap("upstream allocation failed")
+        self.address = bytes.data
+        self.size = size
+        for i in 0..<bytes.length: bytes[i] = 173
+        return bytes
+
+    pub mutating func resize(block: u8[], size: usize) -> bool:
+        discard(block)
+        discard(size)
+        trap("matrix must not resize")
+
+    pub mutating func release(block: u8[]):
+        assert(completed.load(.acquire) == (u32)successful, "free before worker completion")
+        assert(self.address == block.data and self.size == block.length)
+        for byte in block: assert(byte == 0, "matrix not wiped before release")
+        self.parent.release(block)
+        self.address = none
+        self.releases += 1
+
+func memory_paths() -> !:
+    let parameters = argon.Parameters(memory_kib = 35, passes = 3, lanes = 4)
+    for path in 0..<(usize)9:
+        completed.store(0, .release)
+        successful = 0
+        attempts = 0
+        refuse_at = 0
+        observed_passes = 0
+        cancel_in_worker = path == 3
+        cancel_after_pass = path == 4
+        test_request = argon.Cancellation()
+        var audit = Audit(parent = memory.heap, refuse = path == 1)
+        if path == 2: test_request.request()
+        if path >= 5: refuse_at = [(usize)1, 2, 10, 36][path - 5]
+        var output: u8[34]
+        for i in 0..<output.length: output[i] = 173
+        var rejected = false
+        argon.derive_controlled(b"password", b"somesalt", output[1..<33], parameters,
+            workers = 4, controls = argon.Controls(allocator = &audit, cancellation = &test_request,
+                spawn_worker = tracked_spawn, after_pass = observe_pass)) catch failure:
+            assert(path > 0)
+            let expected = memory.exhausted if path == 1 else (argon.cancelled if path < 5 else thread.failed)
+            assert(failure.code == expected)
+            rejected = true
+        assert(rejected == (path > 0) and audit.address == none)
+        assert(output[0] == 173 and output[33] == 173)
+        if path > 0:
+            for byte in output: assert(byte == 173, "failed derivation modified output")
+        assert(audit.allocations == (0 if path == 2 else 1))
+        assert(audit.releases == (0 if path == 1 or path == 2 else 1))
+        if audit.releases > 0: assert(audit.size == 32768)
+        assert((usize)completed.load(.acquire) == successful)
+        if path == 0: assert(successful == 36 and observed_passes == 3)
+        if path == 3: assert(successful == 3 and observed_passes == 0)
+        if path == 4: assert(successful == 12 and observed_passes == 1)
+        if path >= 5: assert(successful == refuse_at - 1 and attempts == refuse_at)
+    cancel_in_worker = false
+    cancel_after_pass = false
+
+func admission() -> !:
+    for path in 0..<(usize)26:
+        var parameters = argon.Parameters(memory_kib = 32, passes = 3, lanes = 4)
+        var limits = argon.Limits()
+        var password: usize = 8
+        var salt: usize = 8
+        var key: usize
+        var associated: usize
+        var output: usize = 32
+        var workers: usize = 4
+        if path == 0: parameters.lanes = 0
+        elif path == 1: parameters.lanes = 0x1000000
+        elif path == 2: parameters.lanes = 65
+        elif path == 3: parameters.memory_kib = 31
+        elif path == 4: parameters.memory_kib = 262145
+        elif path == 5: parameters.passes = 0
+        elif path == 6: parameters.passes = 33
+        elif path == 7: limits.work_kib_passes = 95
+        elif path == 8: workers = 0
+        elif path == 9: workers = 9
+        elif path == 10: output = 3
+        elif path == 11: output = 65537
+        elif path == 12: output = 0x100000000
+        elif path == 13: salt = 7
+        elif path == 14: password = 1048577
+        elif path == 15: salt = 1048577
+        elif path == 16: key = 1048577
+        elif path == 17: associated = 1048577
+        elif path == 18: password = 0x100000000
+        elif path == 19: salt = 0x100000000
+        elif path == 20: key = 0x100000000
+        elif path == 21: associated = 0x100000000
+        elif path == 22: limits.memory_kib = 31
+        elif path == 23: limits.passes = 2
+        elif path == 24: limits.lanes = 3
+        else: limits.output_bytes = 31
+        var rejected = false
+        discard(argon.validate(parameters, limits, password, salt, key, associated, output, workers) catch failure:
+            assert(failure.code == errors.invalid)
+            rejected = true
+            recover (usize)0)
+        assert(rejected)
+    ## Exercise the real entry point too: rejected costs must not allocate/read.
+    var audit = Audit(parent = memory.heap)
+    var output: u8[32]
+    for i in 0..<output.length: output[i] = 173
+    var rejected = false
+    argon.derive_controlled(b"password", b"somesalt", output,
+        argon.Parameters(memory_kib = 31, passes = 1, lanes = 4), controls = argon.Controls(allocator = &audit)) catch failure:
+        assert(failure.code == errors.invalid)
+        rejected = true
+    assert(rejected and audit.allocations == 0)
+    for byte in output: assert(byte == 173)
+    ## Original m (35) is budgeted and hashed; m'=32 determines allocation.
+    assert((try argon.validate(argon.Parameters(memory_kib = 35, passes = 3, lanes = 4),
+        argon.Limits(work_kib_passes = 105), 0, 8, 0, 0, 4, 8)) == 32)
+    ## Maximum-width arithmetic is tested without allocating huge buffers.
+    let wide = argon.Parameters(memory_kib = 0xffffffff, passes = 0xffffffff, lanes = 1)
+    let wide_limits = argon.Limits(memory_kib = 0xffffffff, passes = 0xffffffff,
+        work_kib_passes = 0xfffffffe00000001, input_bytes = 0xffffffff, output_bytes = 0xffffffff)
+    assert((try argon.validate(wide, wide_limits, 0xffffffff, 8, 0, 0, 0xffffffff, 1)) == 0xfffffffc)
+    var narrow_budget = wide_limits
+    narrow_budget.work_kib_passes -= 1
+    rejected = false
+    discard(argon.validate(wide, narrow_budget, 0, 8, 0, 0, 32, 1) catch failure:
+        assert(failure.code == errors.invalid)
+        rejected = true
+        recover (usize)0)
+    assert(rejected)
+
+func overlap() -> !:
+    let parameters = argon.Parameters(memory_kib = 32, passes = 2, lanes = 4)
+    var expected: u8[32]
+    try argon.derive(b"password", b"somesalt", expected, parameters, b"key", b"ad")
+    for which in 0..<4:
+        var data: u8[64]
+        for i in 0..<data.length: data[i] = 173
+        let source = b"password" if which == 0 else (b"somesalt" if which == 1 else (b"key" if which == 2 else b"ad"))
+        for i in 0..<source.length: data[i + 1] = source[i]
+        try argon.derive(data[1..<9] if which == 0 else b"password",
+            data[1..<9] if which == 1 else b"somesalt", data[..<32], parameters,
+            data[1..<4] if which == 2 else b"key", data[1..<3] if which == 3 else b"ad", workers = 4)
+        assert(secure.equal(data[..<32], expected))
+        for i in 32..<64: assert(data[i] == 173)
+
+func independent_entry(raw: void*?):
+    discard(raw)
+    let parameters = argon.Parameters(memory_kib = 32, passes = 2, lanes = 4)
+    var serial: u8[32]
+    var parallel: u8[32]
+    for iteration in 0..<8:
+        var password: u8[16]
+        for i in 0..<password.length: password[i] = (u8)(i + (usize)iteration)
+        argon.derive(password, b"somesalt", serial, parameters) catch failure: trap(failure.message)
+        argon.derive(password, b"somesalt", parallel, parameters, workers = 2) catch failure: trap(failure.message)
+        assert(secure.equal(serial, parallel))
+
+pub func main(arguments: str[]) -> i32!:
+    discard(arguments)
+    try admission()
+    try memory_paths()
+    try overlap()
+    var handles: thread.Handle[8]
+    for i in 0..<8: handles[i] = try thread.spawn(independent_entry, none, stack = 524288)
+    for handle in handles: try handle.join()
+    print("PASS Argon2id admission, rounded allocation, wipe-after-join, partial spawn failures, cancellation, overlap and 8 independent callers")
+    return 0

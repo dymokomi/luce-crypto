@@ -4,6 +4,7 @@ import luce_crypto.hmac as mac
 import luce_crypto.hkdf as kdf
 import luce_crypto.secret as secret
 import luce_crypto.secure as secure
+import luce_crypto.argon2id as password_kdf
 
 pub type Hash = sha2.Hash
 pub type Hmac = mac.Hmac
@@ -11,6 +12,15 @@ pub type Secret = secret.Buffer
 pub let invalid = sha2.invalid
 pub let closed = sha2.closed
 pub let length_exceeded = sha2.length_exceeded
+pub let cancelled = password_kdf.cancelled
+pub type Argon2Parameters = password_kdf.Parameters
+pub type Argon2Limits = password_kdf.Limits
+pub type Cancellation = password_kdf.Cancellation
+
+pub func argon2id(password: const u8[], salt: const u8[], output: u8[], parameters: Argon2Parameters,
+    key: const u8[] = b"", associated: const u8[] = b"", workers: usize = 1,
+    limits: Argon2Limits = Argon2Limits(), cancellation: const Cancellation*? = none) -> !:
+    try password_kdf.derive(password, salt, output, parameters, key, associated, workers, limits, cancellation)
 
 pub func make_hash(algorithm: str = "sha256") -> Hash!:
     return try sha2.make_hash(algorithm)

@@ -39,6 +39,14 @@ jobs:
       - name: Bootstrap without language source changes
         working-directory: luce-crypto
         run: python3 tools/bootstrap.py
+      - name: Recompute fixtures with the pinned test-only Argon2 reference
+        working-directory: luce-crypto
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 -m venv build/oracle-env
+          build/oracle-env/bin/python -m pip install --disable-pip-version-check --only-binary=:all: -r tests/oracle-requirements.txt
+          build/oracle-env/bin/python tests/argon_oracle.py 2>&1 | tee build/argon-oracle.log
       - name: All six modes and real Luce consumer
         working-directory: luce-crypto
         shell: bash
@@ -60,6 +68,12 @@ jobs:
       - name: Retain generated memory bodies for review
         working-directory: luce-crypto
         run: python3 tools/codegen_probe.py
+      - name: Larger bounded Argon2id memory costs
+        working-directory: luce-crypto
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 tests/check_argon.py build/native3/argon-driver --full 2>&1 | tee build/argon-extended.log
       - name: Bundle Linux tests
         if: runner.os == 'Linux'
         working-directory: luce-crypto
@@ -79,5 +93,7 @@ jobs:
             luce-crypto/build/correctness.log
             luce-crypto/build/sanitize.log
             luce-crypto/build/extended.log
+            luce-crypto/build/argon-oracle.log
+            luce-crypto/build/argon-extended.log
             luce-crypto/build/failures/
             luce-crypto/build/codegen/

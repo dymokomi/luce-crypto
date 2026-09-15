@@ -1,8 +1,8 @@
 # luce-crypto
 
 Native Luce Base cryptography with an owning Luce API. MIT OR Apache-2.0.
-Provides byte-oriented incremental SHA-256/384/512, HMAC, HKDF and experimental
-owned secret buffers. No foreign cryptographic engine or subprocess is a runtime
+Provides byte-oriented incremental SHA-256/384/512, HMAC, HKDF, parallel Argon2id
+and experimental owned secret buffers. No foreign cryptographic engine or subprocess is a runtime
 dependency. Keyed APIs are not yet approved for real credential custody.
 
 ```luce
@@ -51,9 +51,10 @@ Native `close()` now uses volatile stores on the exact owned buffer/hash storage
 That does **not** erase other copies, compiler spills/registers, swap or core dumps.
 The pinned native compiler ignores `noinline`; the package does not treat it as a
 security barrier. Functional tests and retained assembly are not independent
-security/side-channel review. Argon2id, AEAD, signatures, hardened custody and TLS
+security/side-channel review. Argon2id cost calibration, AEAD, signatures, hardened custody and TLS
 remain required infrastructure work. No production keys or credentials are created.
 See [keyed APIs and memory limits](docs/KEYED.md).
+See [Argon2id APIs, admission budgets and cancellation](docs/ARGON2ID.md).
 
 ## Tests
 
@@ -66,9 +67,12 @@ python3 tools/bootstrap.py
 python3 tests/run.py
 python3 tests/sanitize.py
 python3 tests/check_hashes.py build/native3/driver build/native3/file-driver --full
+python3 tests/check_argon.py build/native3/argon-driver --full
 python3 tools/codegen_probe.py
 ```
 
 Or supply `--base /path/to/luce-base --luce /path/to/luce` to `tests/run.py`.
 See [validation](docs/VALIDATION.md) for measured scope and exclusions, and
 [provenance](NOTICE.md) for standards and unchanged NIST fixtures.
+The committed Argon2id fixture can additionally be regenerated/verified against
+the pinned test-only reference as described in [Argon2id validation](docs/ARGON2ID_VALIDATION.md).

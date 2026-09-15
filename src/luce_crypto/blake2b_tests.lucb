@@ -1,0 +1,139 @@
+## Test-only RFC 7693/H' oracle driver; this module is not a package export.
+import luce_crypto.blake2b as blake
+import luce_crypto.sha2 as errors
+import luce_crypto.secure as secure
+import files
+import memory
+import c
+
+struct Reader:
+    var data: const u8[]
+    var position: usize
+
+    mutating func take(count: usize) -> const u8[]:
+        assert(count <= self.data.length - self.position)
+        let start = self.position
+        self.position += count
+        return self.data[start..<self.position]
+
+    mutating func number() -> usize:
+        let data = self.take(4)
+        var result: u32
+        for i in 0..<(usize)4: result |= (u32)data[i] << (i * 8)
+        return (usize)result
+
+    mutating func blob() -> const u8[]:
+        let count = self.number()
+        assert(count <= 65536)
+        return self.take(count)
+
+func boundaries() -> !:
+    var output: u8[65]
+    for bad_size in [(usize)0, 65]:
+        var rejected = false
+        discard(blake.make_hash(bad_size) catch failure:
+            assert(failure.code == errors.invalid)
+            rejected = true
+            recover blake.Hash())
+        assert(rejected)
+    var state = try blake.make_hash(64)
+    state.low = 0xffffffffffffff80
+    state.high = 0xffffffffffffffff
+    try state.update(output)
+    try state.update(output[..<62])
+    assert(state.used == 127)
+    let before = state
+    var rejected = false
+    state.update(output[..<1]) catch failure:
+        assert(failure.code == errors.length_exceeded)
+        rejected = true
+    assert(rejected)
+    assert(secure.equal(u8[]((u8*)&state, sizeof(state)), u8[]((u8*)&before, sizeof(before))))
+    try state.update(b"")
+    try state.finish(output)
+    assert(state.count == 0)
+    ## Low counter carry with a non-overflowing high counter.
+    state = try blake.make_hash(64)
+    state.low = 0xffffffffffffff80
+    state.high = 7
+    var block: u8[128]
+    try state.update(block)
+    try state.update(output[..<1])
+    assert(state.high == 8 and state.low == 0 and state.used == 1)
+    state.close()
+    for byte in u8[]((u8*)&state, sizeof(state)): assert(byte == 0)
+    rejected = false
+    blake.expand(b"", output[..<0]) catch failure:
+        assert(failure.code == errors.invalid)
+        rejected = true
+    assert(rejected)
+
+func check_case(kind: usize, data: const u8[], expected: const u8[]) -> !:
+    assert(expected.length > 0)
+    let output = try alloc u8[expected.length + 2] in memory.heap
+    defer free(output) in memory.heap
+    for i in 0..<output.length: output[i] = 173
+    if kind == 1:
+        assert(expected.length <= 64)
+        try blake.digest(data, output[1..<expected.length + 1])
+    else:
+        assert(kind == 2)
+        try blake.expand(data, output[1..<expected.length + 1])
+    assert(secure.equal(output[1..<expected.length + 1], expected))
+    assert(output[0] == 173 and output[output.length - 1] == 173)
+    if kind == 1:
+        for chunk in [(usize)1, 127, 128, 129, 4096]:
+            if data.length > 1024 and chunk < 127: continue
+            var state = try blake.make_hash(expected.length)
+            defer state.close()
+            var position: usize
+            var borrowed: u8[4096]
+            while position < data.length:
+                let count = chunk if chunk < data.length - position else data.length - position
+                for i in 0..<count: borrowed[i] = data[position + i]
+                try state.update(borrowed[..<count])
+                secure.wipe(borrowed)
+                try state.update(b"")
+                position += count
+            var rejected = false
+            state.finish(output[..<expected.length - 1]) catch failure:
+                assert(failure.code == errors.invalid)
+                rejected = true
+            assert(rejected)
+            try state.finish(output)
+            assert(secure.equal(output[..<expected.length], expected))
+            for byte in u8[]((u8*)&state, sizeof(state)): assert(byte == 0)
+            rejected = false
+            state.update(b"") catch failure:
+                assert(failure.code == errors.closed)
+                rejected = true
+            assert(rejected)
+    ## Both one-shot functions consume the whole input before writing output.
+    let capacity = data.length if data.length > expected.length else expected.length
+    let overlap = try alloc u8[capacity + 1] in memory.heap
+    defer free(overlap) in memory.heap
+    for i in 0..<data.length: overlap[i] = data[i]
+    overlap[capacity] = 173
+    if kind == 1: try blake.digest(overlap[..<data.length], overlap[..<expected.length])
+    else: try blake.expand(overlap[..<data.length], overlap[..<expected.length])
+    assert(secure.equal(overlap[..<expected.length], expected) and overlap[capacity] == 173)
+
+pub func main(arguments: str[]) -> i32!:
+    assert(arguments.length == 2)
+    try boundaries()
+    let bytes = try files.read_limit((c.str)arguments[1], 16777216)
+    defer free(bytes) in memory.heap
+    var reader = Reader(data = bytes)
+    assert((str)reader.take(8) == "LCBLK01\0")
+    let records = reader.number()
+    assert(records > 0 and records <= 64)
+    for i in 0..<records:
+        let identity = reader.number()
+        let kind = reader.number()
+        let data = reader.blob()
+        let expected = reader.blob()
+        print(f"CASE {identity}")
+        try check_case(kind, data, expected)
+    assert(reader.position == bytes.length)
+    print(f"PASS blake batch {records}")
+    return 0

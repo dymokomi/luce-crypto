@@ -1,0 +1,5 @@
+# Test-only reference implementation. No foreign engine is linked into Luce.
+argon2-cffi==25.1.0
+argon2-cffi-bindings==25.1.0
+cffi==2.0.0
+pycparser==3.0

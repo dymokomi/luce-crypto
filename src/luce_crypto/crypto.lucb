@@ -6,6 +6,7 @@ import luce_crypto.secret as secret
 import luce_crypto.secure as secure
 import luce_crypto.hmac as mac
 import luce_crypto.hkdf as kdf
+import luce_crypto.argon2id as password_kdf
 
 pub let invalid = sha2.invalid
 pub let closed = sha2.closed
@@ -151,3 +152,52 @@ pub func hkdf(input: interop.Reference[Secret], salt: const u8[], info: const u8
         buffer.close()
         error(failure.code, failure.message)
     return try owned_secret(buffer)
+
+## Explicit costs, immutable configuration during derive, owning secret result.
+## Default admission ceilings are not calibrated vault parameters. One config is
+## used by one Luce caller at a time; Base internals own/join their lane workers.
+pub struct Argon2id:
+    var parameters: password_kdf.Parameters = password_kdf.Parameters()
+    var count: usize
+    var workers: usize
+    var disposed: bool = true
+
+    pub func init(memory_kib: i64, passes: i64, lanes: i64, length: i64 = 32, workers: i64 = 1) -> !:
+        if memory_kib < 0 or memory_kib > 0xffffffff or passes < 0 or passes > 0xffffffff or lanes < 0 or lanes > 0xffffffff:
+            error(invalid, "Argon2id costs must be nonnegative u32 values")
+        if length < 4 or length > 65536 or workers < 1 or workers > 8:
+            error(invalid, "Argon2id result/worker bounds")
+        let parameters = password_kdf.Parameters(memory_kib = (u32)memory_kib, passes = (u32)passes, lanes = (u32)lanes)
+        discard(try password_kdf.validate(parameters, password_kdf.Limits(), 0, 8, 0, 0, (usize)length, (usize)workers))
+        self.parameters = parameters
+        self.count = (usize)length
+        self.workers = (usize)workers
+        self.disposed = false
+
+    func run(password: const u8[], salt: const u8[], key: const u8[], associated: const u8[]) -> interop.Reference[Secret]!:
+        if self.disposed: error(closed, "Argon2id configuration is closed")
+        discard(try password_kdf.validate(self.parameters, password_kdf.Limits(), password.length, salt.length,
+            key.length, associated.length, self.count, self.workers))
+        var buffer = try secret.create(self.count)
+        password_kdf.derive(password, salt, try buffer.writable(), self.parameters, key, associated, self.workers) catch failure:
+            buffer.close()
+            error(failure.code, failure.message)
+        return try owned_secret(buffer)
+
+    pub func derive(password: interop.Reference[Secret], salt: const u8[], associated: const u8[] = b"") -> interop.Reference[Secret]!:
+        let owner = try password.get()
+        return try self.run(try owner.buffer.bytes(), salt, b"", associated)
+
+    pub func derive_keyed(password: interop.Reference[Secret], key: interop.Reference[Secret], salt: const u8[],
+        associated: const u8[] = b"") -> interop.Reference[Secret]!:
+        let password_owner = try password.get()
+        let key_owner = try key.get()
+        return try self.run(try password_owner.buffer.bytes(), salt, try key_owner.buffer.bytes(), associated)
+
+    pub mutating func close():
+        self.parameters = password_kdf.Parameters()
+        self.count = 0
+        self.workers = 0
+        self.disposed = true
+
+pub let argon2id_type: interop.Type[Argon2id] = interop.Type[Argon2id]("Argon2id", Argon2id.close, closeable = true)

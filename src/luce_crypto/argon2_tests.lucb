@@ -1,0 +1,106 @@
+## Native Argon2id known-answer/intermediate-state and differential test driver.
+import luce_crypto.argon2id as argon
+import luce_crypto.secure as secure
+import files
+import memory
+import c
+
+let intermediate: u64[24] = [
+    0x6b2e09f10671bd43, 0xf69f5c27918a21be, 0xdea7810ea41290e1, 0x6787f7171870f893,
+    0x377fa81666dc7f2b, 0x50e586398a9c39c8, 0x6f732732a550924a, 0x81f88b28683ea8e5,
+    0x3653ec9d01583df9, 0x69ef53a72d1e1fd3, 0x35635631744ab54f, 0x599512e96a37ab6e,
+    0x4d4b435cea35caa6, 0xc582210d99ad1359, 0xd087971b36fd6d77, 0xa55222a93754c692,
+    0x942363968ce597a4, 0xa22448c0bdad5760, 0xa5f80662b6fa8748, 0xa0f9b9ce392f719f,
+    0xd723359b485f509b, 0xcb78824f42375111, 0x35bc8cc6e83b1875, 0x0b012846a40f346a]
+
+func check_pass(pass: usize, matrix: const u64[]):
+    assert(pass < 3 and matrix.length == 4096)
+    for i in 0..<(usize)4:
+        assert(matrix[i] == intermediate[pass * 8 + i])
+        assert(matrix[matrix.length - 4 + i] == intermediate[pass * 8 + 4 + i])
+
+func hexadecimal(data: const u8[], expected: str):
+    let digits = b"0123456789abcdef"
+    assert(data.length * 2 == expected.length)
+    for i in 0..<data.length:
+        assert(digits[(usize)(data[i] >> 4)] == expected.bytes[i * 2])
+        assert(digits[(usize)(data[i] & 15)] == expected.bytes[i * 2 + 1])
+
+func rfc() -> !:
+    var password: u8[32]
+    var salt: u8[16]
+    var key: u8[8]
+    var associated: u8[12]
+    for i in 0..<password.length: password[i] = 1
+    for i in 0..<salt.length: salt[i] = 2
+    for i in 0..<key.length: key[i] = 3
+    for i in 0..<associated.length: associated[i] = 4
+    let parameters = argon.Parameters(memory_kib = 32, passes = 3, lanes = 4)
+    var initial: u8[64]
+    try argon.prehash(parameters, password, salt, key, associated, 32, initial)
+    hexadecimal(initial, "2889de487eb42ae500c0007ed9252f1069eadec40d5765b485de6dc2437a67b8546a2f0acc1a0882db8fcf74714b472e94df421a5da1112ffa11434370a1e997")
+    var output: u8[32]
+    for workers in [(usize)1, 2, 3, 4, 8]:
+        try argon.derive_controlled(password, salt, output, parameters, key, associated,
+            workers, controls = argon.Controls(after_pass = check_pass))
+        hexadecimal(output, "0d640df58d78766c08c037a34a8b53c9d01ef0452d75b65eb52520e96b01e659")
+
+struct Reader:
+    var data: const u8[]
+    var position: usize
+
+    mutating func take(count: usize) -> const u8[]:
+        assert(count <= self.data.length - self.position)
+        let start = self.position
+        self.position += count
+        return self.data[start..<self.position]
+
+    mutating func number() -> usize:
+        let data = self.take(4)
+        var result: u32
+        for i in 0..<(usize)4: result |= (u32)data[i] << (i * 8)
+        return (usize)result
+
+    mutating func blob() -> const u8[]:
+        let count = self.number()
+        assert(count <= 1048576)
+        return self.take(count)
+
+func check_case(parameters: argon.Parameters, password: const u8[], salt: const u8[],
+    key: const u8[], associated: const u8[], expected: const u8[], workers: usize) -> !:
+    assert(expected.length <= 65536)
+    let output = try alloc u8[expected.length + 2] in memory.heap
+    defer free(output) in memory.heap
+    for i in 0..<output.length: output[i] = 173
+    try argon.derive(password, salt, output[1..<expected.length + 1], parameters,
+        key, associated, workers)
+    assert(output[0] == 173 and output[output.length - 1] == 173)
+    assert(secure.equal(output[1..<expected.length + 1], expected))
+
+pub func main(arguments: str[]) -> i32!:
+    if arguments.length == 1:
+        try rfc()
+        print("PASS RFC 9106 Argon2id prehash, all three pass states and tag; 1/2/3/4/8 workers")
+        return 0
+    assert(arguments.length == 2)
+    let bytes = try files.read_limit((c.str)arguments[1], 16777216)
+    defer free(bytes) in memory.heap
+    var reader = Reader(data = bytes)
+    assert((str)reader.take(8) == "LCARG01\0")
+    let records = reader.number()
+    assert(records > 0 and records <= 16)
+    for i in 0..<records:
+        let identity = reader.number()
+        let parameters = argon.Parameters(memory_kib = (u32)reader.number(),
+            passes = (u32)reader.number(), lanes = (u32)reader.number())
+        let workers = reader.number()
+        let password = reader.blob()
+        let salt = reader.blob()
+        let key = reader.blob()
+        let associated = reader.blob()
+        let expected = reader.blob()
+        print(f"CASE {identity} workers={workers}")
+        try check_case(parameters, password, salt, key, associated, expected, workers)
+    assert(reader.position == bytes.length)
+    print(f"PASS argon batch {records}")
+    return 0

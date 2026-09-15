@@ -17,6 +17,7 @@ struct Heap: memory.Allocator:
     var refused: usize
     var live: usize
     var erased: usize
+    var erased_matrices: usize
 
     mutating func arm(index: usize, persistent: bool = false):
         self.attempts = 0
@@ -53,6 +54,9 @@ struct Heap: memory.Allocator:
                 if block.length == 73:
                     for byte in block: assert(byte == 0, "owned secret allocation not erased")
                     self.erased += 1
+                if block.length == 32768:
+                    for byte in block: assert(byte == 0, "Argon2 matrix not erased")
+                    self.erased_matrices += 1
                 self.blocks[i] = Block()
                 self.live -= 1
                 self.parent.release(block)
@@ -69,7 +73,10 @@ func restore(original: memory.Allocator):
 func create(kind: usize, key: interop.Reference[crypto.Secret], input: const u8[]) -> interop.Reference[crypto.Secret]!:
     if kind == 0: return try crypto.secret_from_bytes(input)
     if kind == 1: return try crypto.random_secret(73)
-    return try crypto.hkdf(key, b"salt", b"info", 73)
+    if kind == 2: return try crypto.hkdf(key, b"salt", b"info", 73)
+    var configuration = try crypto.Argon2id(32, 2, 4, 73, 1)
+    defer configuration.close()
+    return try configuration.derive(key, b"somesalt")
 
 func creation(heap: Heap*, kind: usize, key: interop.Reference[crypto.Secret], input: const u8[], at: usize, persistent: bool) -> usize!:
     heap.arm(at, persistent)
@@ -100,14 +107,14 @@ pub func main(arguments: str[]) -> i32!:
     memory.heap = &heap
     defer restore(original)
     var cases: usize
-    for kind in 0..<(usize)3:
+    for kind in 0..<(usize)4:
         let allocations = try creation(&heap, kind, key, input, 0, false)
-        assert(allocations == 3)
+        assert(allocations == (4 if kind == 3 else 3))
         for persistent in [false, true]:
             for at in 1..<allocations + 1:
                 assert((try creation(&heap, kind, key, input, at, persistent)) == at)
                 cases += 1
-    assert(heap.erased == 15)
+    assert(heap.erased == 22 and heap.erased_matrices == 5)
     for persistent in [false, true]:
         heap.arm(1, persistent)
         var refused = false
@@ -154,6 +161,29 @@ pub func main(arguments: str[]) -> i32!:
             assert(failure.code == native.invalid)
             recover none
         assert(invalid_kdf == none and heap.attempts == 0)
+    for bad in 0..<10:
+        heap.arm(0)
+        let invalid_argon: crypto.Argon2id? = crypto.Argon2id(
+            -1 if bad == 0 else (262145 if bad == 1 else (0x100000000 if bad == 2 else 32)),
+            -1 if bad == 3 else (0 if bad == 4 else 2),
+            -1 if bad == 5 else (65 if bad == 6 else 4),
+            -1 if bad == 7 else (65537 if bad == 8 else 32),
+            0 if bad == 9 else 1) catch failure:
+            assert(failure.code == native.invalid)
+            recover none
+        assert(invalid_argon == none and heap.attempts == 0)
+    var configuration = try crypto.Argon2id(32, 2, 4)
+    heap.arm(0)
+    let invalid_salt: interop.Reference[crypto.Secret]? = configuration.derive(key, b"short") catch failure:
+        assert(failure.code == native.invalid)
+        recover none
+    assert(invalid_salt == none and heap.attempts == 0)
+    configuration.close()
+    configuration.close()
+    let closed_configuration: interop.Reference[crypto.Secret]? = configuration.derive(key, b"somesalt") catch failure:
+        assert(failure.code == native.closed)
+        recover none
+    assert(closed_configuration == none and heap.attempts == 0)
     ## The input owner is closed but alive: high-level APIs must return errors,
     ## not trap through Reference.value().
     key.close()
@@ -169,6 +199,12 @@ pub func main(arguments: str[]) -> i32!:
         rejected = true
         recover none
     assert(rejected and closed_result == none)
+    configuration = try crypto.Argon2id(32, 2, 4)
+    let closed_argon: interop.Reference[crypto.Secret]? = configuration.derive(key, b"somesalt") catch failure:
+        assert(failure.code == interop.invalid)
+        recover none
+    assert(closed_argon == none)
+    configuration.close()
     heap.clean()
     print(f"PASS {cases} keyed allocation-failure paths, wipe-before-free, result-allocation retry and closed references")
     return 0

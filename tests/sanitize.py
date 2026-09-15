@@ -7,6 +7,8 @@ import subprocess
 from run import SOURCES, ROOT
 from check_hashes import check, check_files, checked
 from check_keyed import check_keyed
+from check_blake import check_blake
+from check_argon import check_argon
 
 
 def main():
@@ -26,11 +28,13 @@ def main():
         run([os.environ.get("CC", "cc"), "-std=gnu11", "-O1", "-g", "-w", "-fno-strict-aliasing",
              "-fsanitize=address,undefined", "-fno-omit-frame-pointer", "-I", runtime,
              generated, runtime / "lucb_rt.c", "-pthread", "-lm", "-o", output / name])
-    for name in ("native", "keyed-native", "keyed-failures", "memory-probe"):
+    for name in ("native", "keyed-native", "keyed-failures", "memory-probe", "argon-driver", "argon-failures"):
         print(checked([output / name]).stdout.decode(), end="", flush=True)
     check(output / "driver")
     check_files(output / "file-driver")
     check_keyed(output / "keyed-driver")
+    check_blake(output / "blake-driver")
+    check_argon(output / "argon-driver")
     print("PASS AddressSanitizer + UndefinedBehaviorSanitizer", flush=True)
 
 

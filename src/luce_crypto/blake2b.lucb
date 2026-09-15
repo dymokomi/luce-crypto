@@ -1,0 +1,143 @@
+## RFC 7693 sequential unkeyed BLAKE2b, internal Argon2 dependency.
+## Output size is a hash parameter (not truncation). No tree/personalized mode.
+import luce_crypto.sha2 as errors
+import luce_crypto.secure as secure
+
+let iv: u64[8] = [0x6a09e667f3bcc908, 0xbb67ae8584caa73b,
+    0x3c6ef372fe94f82b, 0xa54ff53a5f1d36f1, 0x510e527fade682d1,
+    0x9b05688c2b3e6c1f, 0x1f83d9abfb41bd6b, 0x5be0cd19137e2179]
+let schedule: u8[160] = [
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+    14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3,
+    11, 8, 12, 0, 5, 2, 15, 13, 10, 14, 3, 6, 7, 1, 9, 4,
+    7, 9, 3, 1, 13, 12, 11, 14, 2, 6, 5, 10, 4, 0, 15, 8,
+    9, 0, 5, 7, 2, 4, 10, 15, 14, 1, 11, 12, 6, 8, 3, 13,
+    2, 12, 6, 10, 0, 11, 8, 3, 4, 13, 7, 5, 15, 14, 1, 9,
+    12, 5, 1, 15, 14, 13, 4, 10, 0, 7, 6, 3, 9, 2, 8, 11,
+    13, 11, 7, 14, 12, 1, 3, 9, 5, 0, 15, 4, 8, 6, 2, 10,
+    6, 15, 14, 9, 11, 3, 0, 8, 12, 2, 13, 7, 1, 4, 10, 5,
+    10, 2, 8, 4, 7, 6, 1, 5, 15, 11, 9, 14, 3, 12, 13, 0]
+
+pub func rotate(value: u64, count: u64) -> u64:
+    return (value >> count) | (value << (64 - count))
+
+func mix(v: u64[], a: usize, b: usize, c: usize, d: usize, x: u64, y: u64):
+    v[a] = v[a] +% v[b] +% x
+    v[d] = rotate(v[d] ^ v[a], 32)
+    v[c] +%= v[d]
+    v[b] = rotate(v[b] ^ v[c], 24)
+    v[a] = v[a] +% v[b] +% y
+    v[d] = rotate(v[d] ^ v[a], 16)
+    v[c] +%= v[d]
+    v[b] = rotate(v[b] ^ v[c], 63)
+
+pub func read64(bytes: const u8[]) -> u64:
+    assert(bytes.length >= 8)
+    var value: u64
+    for i in 0..<(usize)8: value |= (u64)bytes[i] << (i * 8)
+    return value
+
+pub func write32(value: u32, bytes: u8[]):
+    assert(bytes.length >= 4)
+    for i in 0..<(usize)4: bytes[i] = (u8)(value >> (i * 8))
+
+pub func write64(value: u64, bytes: u8[]):
+    assert(bytes.length >= 8)
+    for i in 0..<(usize)8: bytes[i] = (u8)(value >> (i * 8))
+
+pub struct Hash:
+    var words: u64[8]
+    var buffer: u8[128]
+    ## Exposed only to internal package modules for synthetic counter tests.
+    pub var used: usize
+    pub var low: u64
+    pub var high: u64
+    pub var count: usize
+
+    mutating func block(final_block: bool):
+        let low = self.low +% (u64)self.used
+        if low < self.low: self.high += 1
+        self.low = low
+        var v: u64[16]
+        var message: u64[16]
+        defer secure.wipe(u8[]((u8*)&v[0], sizeof(v)))
+        defer secure.wipe(u8[]((u8*)&message[0], sizeof(message)))
+        for i in 0..<(usize)8:
+            v[i] = self.words[i]
+            v[i + 8] = iv[i]
+        v[12] ^= self.low
+        v[13] ^= self.high
+        if final_block: v[14] = ~v[14]
+        for i in 0..<(usize)16: message[i] = read64(self.buffer[i * 8..<i * 8 + 8])
+        for round_index in 0..<(usize)12:
+            let s = schedule[(round_index % 10) * 16..<((round_index % 10) + 1) * 16]
+            for i in 0..<(usize)4:
+                mix(v, i, i + 4, i + 8, i + 12, message[(usize)s[i * 2]], message[(usize)s[i * 2 + 1]])
+            mix(v, 0, 5, 10, 15, message[(usize)s[8]], message[(usize)s[9]])
+            mix(v, 1, 6, 11, 12, message[(usize)s[10]], message[(usize)s[11]])
+            mix(v, 2, 7, 8, 13, message[(usize)s[12]], message[(usize)s[13]])
+            mix(v, 3, 4, 9, 14, message[(usize)s[14]], message[(usize)s[15]])
+        for i in 0..<(usize)8: self.words[i] ^= v[i] ^ v[i + 8]
+        self.used = 0
+
+    pub mutating func update(input: const u8[]) -> !:
+        if self.count == 0: error(errors.closed, "BLAKE2b is closed")
+        ## Count the pending block as well; fail before mutation at 2^128 bytes.
+        let pending = self.low +% (u64)self.used
+        let carry: u64 = 1 if pending < self.low else 0
+        let end = pending +% (u64)input.length
+        let extra: u64 = carry + (1 if end < pending else 0)
+        if self.high > 0xffffffffffffffff - extra: error(errors.length_exceeded, "BLAKE2b input is too long")
+        var position: usize
+        while position < input.length:
+            if self.used == 128: self.block(false)
+            let take = 128 - self.used if 128 - self.used < input.length - position else input.length - position
+            for i in 0..<take: self.buffer[self.used + i] = input[position + i]
+            self.used += take
+            position += take
+
+    pub mutating func finish(output: u8[]) -> !:
+        if self.count == 0: error(errors.closed, "BLAKE2b is closed")
+        if output.length < self.count: error(errors.invalid, "BLAKE2b output is too short")
+        defer self.close()
+        for i in self.used..<(usize)128: self.buffer[i] = 0
+        self.block(true)
+        for i in 0..<self.count: output[i] = (u8)(self.words[i // 8] >> ((i % 8) * 8))
+
+    pub mutating func close():
+        secure.wipe(u8[]((u8*)&self, sizeof(Hash)))
+
+pub func make_hash(count: usize) -> Hash!:
+    if count == 0 or count > 64: error(errors.invalid, "BLAKE2b output size must be 1-64")
+    var result = Hash(count = count)
+    for i in 0..<(usize)8: result.words[i] = iv[i]
+    result.words[0] ^= 0x01010000 ^ (u64)count
+    return result
+
+pub func digest(input: const u8[], output: u8[]) -> !:
+    var state = try make_hash(output.length)
+    defer state.close()
+    try state.update(input)
+    try state.finish(output)
+
+## RFC 9106 H'. Input is consumed before output, so equal input/output may alias.
+pub func expand(input: const u8[], output: u8[]) -> !:
+    if output.length == 0 or output.length > 0xffffffff: error(errors.invalid, "H' output length")
+    var size: u8[4]
+    write32((u32)output.length, size)
+    var state = try make_hash(output.length if output.length <= 64 else 64)
+    defer state.close()
+    try state.update(size)
+    try state.update(input)
+    if output.length <= 64:
+        try state.finish(output)
+        return
+    var previous: u8[64]
+    defer secure.wipe(previous)
+    try state.finish(previous)
+    var position: usize
+    while output.length - position > 64:
+        for i in 0..<(usize)32: output[position + i] = previous[i]
+        position += 32
+        if output.length - position > 64: try digest(previous, previous)
+    try digest(previous, output[position..])

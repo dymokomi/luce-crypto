@@ -1,0 +1,279 @@
+## Native RFC 9106 Argon2id version 0x13. No password/vault serialization policy.
+import luce_crypto.blake2b as blake
+import luce_crypto.sha2 as errors
+import luce_crypto.secure as secure
+import memory
+import thread
+
+pub let cancelled: ErrorCode = ErrorCode.package(4)
+
+## Costs are required, not automatically selected password-hardening defaults.
+pub struct Parameters:
+    pub var memory_kib: u32
+    pub var passes: u32
+    pub var lanes: u32
+
+## Admission ceilings, NOT recommended cost parameters. Native callers can supply
+## their own explicit budget; values are checked before allocation/input reading.
+pub struct Limits:
+    pub var memory_kib: u32 = 262144
+    pub var passes: u32 = 32
+    pub var lanes: u32 = 64
+    pub var work_kib_passes: u64 = 2097152
+    pub var input_bytes: usize = 1048576
+    pub var output_bytes: usize = 65536
+
+pub struct Cancellation:
+    var requested: @u32
+
+    pub mutating func request():
+        self.requested.store(1, .release)
+
+    pub func is_requested() -> bool:
+        return self.requested.load(.acquire) != 0
+
+pub func validate(parameters: Parameters, limits: Limits, password: usize,
+    salt: usize, key: usize, associated: usize, output: usize, workers: usize) -> usize!:
+    if parameters.lanes == 0 or parameters.lanes > 0xffffff or parameters.lanes > limits.lanes:
+        error(errors.invalid, "Argon2id lane count")
+    if parameters.memory_kib < 8 * parameters.lanes or parameters.memory_kib > limits.memory_kib:
+        error(errors.invalid, "Argon2id memory cost")
+    if parameters.passes == 0 or parameters.passes > limits.passes:
+        error(errors.invalid, "Argon2id pass count")
+    if (u64)parameters.memory_kib * (u64)parameters.passes > limits.work_kib_passes:
+        error(errors.invalid, "Argon2id work budget")
+    if workers == 0 or workers > 8: error(errors.invalid, "Argon2id workers must be 1-8")
+    if output < 4 or output > 0xffffffff or output > limits.output_bytes:
+        error(errors.invalid, "Argon2id output size")
+    ## Eight-byte minimum is this API's policy (and the reference API's), not an
+    ## extra RFC 9106 requirement. Callers should use distinct random 16-byte salts.
+    if salt < 8: error(errors.invalid, "Argon2id salt must contain at least 8 bytes")
+    for count in [password, salt, key, associated]:
+        if count > 0xffffffff or count > limits.input_bytes:
+            error(errors.invalid, "Argon2id input size")
+    let group = (usize)4 * (usize)parameters.lanes
+    let blocks = (usize)parameters.memory_kib // group * group
+    if blocks > ((usize)~(usize)0) // 1024: error(errors.invalid, "Argon2id allocation size")
+    return blocks
+
+func number(state: blake.Hash*, value: u32) -> !:
+    var encoded: u8[4]
+    blake.write32(value, encoded)
+    try state.update(encoded)
+
+pub func prehash(parameters: Parameters, password: const u8[], salt: const u8[],
+    key: const u8[], associated: const u8[], output_length: usize, output: u8[]) -> !:
+    assert(output.length == 64)
+    var state = try blake.make_hash(64)
+    defer state.close()
+    for value in [parameters.lanes, (u32)output_length, parameters.memory_kib,
+        parameters.passes, (u32)19, (u32)2]: try number(&state, value)
+    for input in [password, salt, key, associated]:
+        try number(&state, (u32)input.length)
+        try state.update(input)
+    try state.finish(output)
+
+func add_product(left: u64, right: u64) -> u64:
+    return left +% right +% ((u64)2 *% (left & 0xffffffff) *% (right & 0xffffffff))
+
+func mix(words: u64[], a: usize, b: usize, c: usize, d: usize):
+    words[a] = add_product(words[a], words[b])
+    words[d] = blake.rotate(words[d] ^ words[a], 32)
+    words[c] = add_product(words[c], words[d])
+    words[b] = blake.rotate(words[b] ^ words[c], 24)
+    words[a] = add_product(words[a], words[b])
+    words[d] = blake.rotate(words[d] ^ words[a], 16)
+    words[c] = add_product(words[c], words[d])
+    words[b] = blake.rotate(words[b] ^ words[c], 63)
+
+func permute(words: u64[]):
+    for i in 0..<(usize)4: mix(words, i, i + 4, i + 8, i + 12)
+    mix(words, 0, 5, 10, 15)
+    mix(words, 1, 6, 11, 12)
+    mix(words, 2, 7, 8, 13)
+    mix(words, 3, 4, 9, 14)
+
+## All reads of the source blocks precede stores; address generation aliases its
+## right input and output. Never read uninitialized old output in the first pass.
+func compress(left: const u64[], right: const u64[], output: u64[], xor_old: bool):
+    assert(left.length == 128 and right.length == 128 and output.length == 128)
+    var original: u64[128]
+    var words: u64[128]
+    var column: u64[16]
+    defer secure.wipe(u8[]((u8*)&original[0], sizeof(original)))
+    defer secure.wipe(u8[]((u8*)&words[0], sizeof(words)))
+    defer secure.wipe(u8[]((u8*)&column[0], sizeof(column)))
+    for i in 0..<(usize)128:
+        words[i] = left[i] ^ right[i]
+        original[i] = words[i] ^ (output[i] if xor_old else 0)
+    for row in 0..<(usize)8: permute(words[row * 16..<(row + 1) * 16])
+    for index in 0..<(usize)8:
+        for row in 0..<(usize)8:
+            column[row * 2] = words[row * 16 + index * 2]
+            column[row * 2 + 1] = words[row * 16 + index * 2 + 1]
+        permute(column)
+        for row in 0..<(usize)8:
+            words[row * 16 + index * 2] = column[row * 2]
+            words[row * 16 + index * 2 + 1] = column[row * 2 + 1]
+    for i in 0..<(usize)128: output[i] = words[i] ^ original[i]
+
+func next_addresses(input: u64[], addresses: u64[], zero: const u64[]):
+    input[6] += 1
+    compress(zero, input, addresses, false)
+    compress(zero, addresses, addresses, false)
+
+func reference_index(pass: usize, slice: usize, index: usize, segment: usize,
+    same_lane: bool, pseudo_random: u64) -> usize:
+    let lane_length = segment * 4
+    var area: usize
+    if pass == 0:
+        if slice == 0: area = index - 1
+        elif same_lane: area = slice * segment + index - 1
+        else: area = slice * segment - (1 if index == 0 else 0)
+    elif same_lane: area = lane_length - segment + index - 1
+    else: area = lane_length - segment - (1 if index == 0 else 0)
+    let low = pseudo_random & 0xffffffff
+    let square = (low * low) >> 32
+    let relative = area - 1 - (usize)(((u64)area * square) >> 32)
+    let start = (slice + 1) * segment if pass != 0 and slice != 3 else 0
+    return (start + relative) % lane_length
+
+struct Job:
+    var matrix: u64[]
+    var parameters: Parameters = Parameters()
+    var segment: usize
+    var pass: usize
+    var slice: usize
+    var group: usize
+    var groups: usize
+
+func fill_segment(job: const Job*, lane: usize):
+    let lane_length = job.segment * 4
+    let independent = job.pass == 0 and job.slice < 2
+    var addresses: u64[128]
+    var input: u64[128]
+    var zero: u64[128]
+    defer secure.wipe(u8[]((u8*)&addresses[0], sizeof(addresses)))
+    defer secure.wipe(u8[]((u8*)&input[0], sizeof(input)))
+    if independent:
+        input[0] = (u64)job.pass
+        input[1] = (u64)lane
+        input[2] = (u64)job.slice
+        input[3] = (u64)(job.matrix.length // 128)
+        input[4] = (u64)job.parameters.passes
+        input[5] = 2
+    let start: usize = 2 if job.pass == 0 and job.slice == 0 else 0
+    if independent and start == 2: next_addresses(input, addresses, zero)
+    for index in start..<job.segment:
+        let current = lane * lane_length + job.slice * job.segment + index
+        let previous = current + lane_length - 1 if current % lane_length == 0 else current - 1
+        var pseudo_random: u64
+        if independent:
+            if index % 128 == 0: next_addresses(input, addresses, zero)
+            pseudo_random = addresses[index % 128]
+        else: pseudo_random = job.matrix[previous * 128]
+        let selected_lane = lane if job.pass == 0 and job.slice == 0 else (usize)((pseudo_random >> 32) % (u64)job.parameters.lanes)
+        let selected_index = reference_index(job.pass, job.slice, index,
+            job.segment, selected_lane == lane, pseudo_random)
+        let selected = selected_lane * lane_length + selected_index
+        compress(job.matrix[previous * 128..<(previous + 1) * 128],
+            job.matrix[selected * 128..<(selected + 1) * 128],
+            job.matrix[current * 128..<(current + 1) * 128], job.pass != 0)
+
+func worker_entry(raw: void*?):
+    let address = raw else trap("missing Argon2id worker context")
+    let job = (const Job*)address
+    var lane = job.group
+    while lane < (usize)job.parameters.lanes:
+        fill_segment(job, lane)
+        lane += job.groups
+
+func start_worker(entry: func(void*?) -> unit, context: void*?) -> thread.Handle!:
+    return try thread.spawn(entry, context, stack = 524288, name = "argon2id")
+
+func no_observer(pass: usize, matrix: const u64[]):
+    discard(pass)
+    discard(matrix)
+
+## Package-internal fault/known-answer hooks. Not exported by crypto_native or
+## the Luce facade. Allocator and cancellation objects must outlive this call.
+pub struct Controls:
+    pub var allocator: memory.Allocator?
+    pub var cancellation: const Cancellation*?
+    pub var spawn_worker: func(func(void*?) -> unit, void*?) -> thread.Handle! = start_worker
+    pub var after_pass: func(usize, const u64[]) -> unit = no_observer
+
+func check_cancel(controls: Controls) -> !:
+    if let request = controls.cancellation:
+        if request.is_requested(): error(cancelled, "Argon2id cancelled")
+
+func join_workers(handles: thread.Handle[], started: const usize*):
+    for index in 0..<*started:
+        handles[index].join() catch failure: trap(failure.message)
+
+func release_matrix(matrix: u64[], allocator: memory.Allocator):
+    secure.wipe(u8[]((u8*)matrix.data, matrix.length * 8))
+    free(matrix) in allocator
+
+func fill_slice(matrix: u64[], parameters: Parameters, segment: usize, pass: usize,
+    slice: usize, workers: usize, controls: Controls) -> !:
+    let groups = workers if workers < (usize)parameters.lanes else (usize)parameters.lanes
+    ## Each used slot is completely initialized below before any worker starts.
+    var jobs: Job[8] = ---
+    var handles: thread.Handle[8]
+    var started: usize
+    ## All workers must finish before returning, including partial spawn failure.
+    ## Join failure cannot safely unwind/free borrowed memory: fail closed by trap.
+    defer join_workers(handles, &started)
+    for group in 0..<groups:
+        jobs[group] = Job(matrix = matrix, parameters = parameters, segment = segment,
+            pass = pass, slice = slice, group = group, groups = groups)
+    for group in (usize)1..<groups:
+        handles[started] = try controls.spawn_worker(worker_entry, (void*)&jobs[group])
+        started += 1
+    worker_entry((void*)&jobs[0])
+
+pub func derive_controlled(password: const u8[], salt: const u8[], output: u8[],
+    parameters: Parameters, key: const u8[] = b"", associated: const u8[] = b"",
+    workers: usize = 1, limits: Limits = Limits(), controls: Controls = Controls()) -> !:
+    let blocks = try validate(parameters, limits, password.length, salt.length,
+        key.length, associated.length, output.length, workers)
+    try check_cancel(controls)
+    let selected = controls.allocator else memory.heap
+    let matrix = try alloc u64[blocks * 128] in selected
+    defer release_matrix(matrix, selected)
+    var seed: u8[72]
+    var bytes: u8[1024]
+    defer secure.wipe(seed)
+    defer secure.wipe(bytes)
+    try prehash(parameters, password, salt, key, associated, output.length, seed[..<64])
+    let segment = blocks // ((usize)parameters.lanes * 4)
+    let lane_length = segment * 4
+    for lane in 0..<(usize)parameters.lanes:
+        try check_cancel(controls)
+        blake.write32((u32)lane, seed[68..])
+        for index in 0..<(usize)2:
+            blake.write32((u32)index, seed[64..<68])
+            try blake.expand(seed, bytes)
+            let first = (lane * lane_length + index) * 128
+            for word in 0..<(usize)128: matrix[first + word] = blake.read64(bytes[word * 8..<word * 8 + 8])
+    secure.wipe(seed)
+    for pass in 0..<(usize)parameters.passes:
+        for slice in 0..<(usize)4:
+            try check_cancel(controls)
+            try fill_slice(matrix, parameters, segment, pass, slice, workers, controls)
+        controls.after_pass(pass, matrix)
+    try check_cancel(controls)
+    for word in 0..<(usize)128:
+        var value: u64
+        for lane in 0..<(usize)parameters.lanes: value ^= matrix[((lane + 1) * lane_length - 1) * 128 + word]
+        blake.write64(value, bytes[word * 8..<word * 8 + 8])
+    ## Every input has been consumed; output may alias any input. No output is
+    ## written on admission/allocation/cancellation/spawn failure.
+    try blake.expand(bytes, output)
+
+pub func derive(password: const u8[], salt: const u8[], output: u8[], parameters: Parameters,
+    key: const u8[] = b"", associated: const u8[] = b"", workers: usize = 1,
+    limits: Limits = Limits(), cancellation: const Cancellation*? = none) -> !:
+    try derive_controlled(password, salt, output, parameters, key, associated, workers,
+        limits, Controls(cancellation = cancellation))

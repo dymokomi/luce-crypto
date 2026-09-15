@@ -1,5 +1,6 @@
 from crypto import Hasher, digest
 from crypto import Hmac, secret_from_bytes, random_secret, authenticate, hkdf
+from crypto import Argon2id
 
 pub func main(arguments: list[str]) -> int!:
     let state = Hasher()
@@ -48,5 +49,24 @@ pub func main(arguments: list[str]) -> int!:
     let random = random_secret(32)
     assert(random.length() == 32)
     random.close()
-    print("PASS Luce hash/keyed API, snapshots, retained results, secret ownership, HMAC and RFC HKDF")
+    let password = secret_from_bytes(b"password")
+    let configuration = Argon2id(32, 2, 4, 32, 4)
+    let password_key = configuration.derive(password, b"somesalt")
+    let password_key_copy = password_key.reveal()
+    password.close()
+    configuration.close()
+    assert(password_key.matches(b"\xd7\x4d\x7d\xb1\x54\xb3\x12\x93\x16\x25\xcd\xe5\xa5\x1f\x76\xbc\x52\x11\x3b\x4b\x05\x15\xaa\x94\x95\x22\x03\xb3\xcc\x45\xb8\x00"))
+    password_key.close()
+    assert(password_key_copy.length == 32)
+    let rfc_password = secret_from_bytes(b"\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01")
+    let rfc_key = secret_from_bytes(b"\x03\x03\x03\x03\x03\x03\x03\x03")
+    let rfc_configuration = Argon2id(32, 3, 4, 32, 4)
+    let rfc_result = rfc_configuration.derive_keyed(rfc_password, rfc_key,
+        b"\x02\x02\x02\x02\x02\x02\x02\x02\x02\x02\x02\x02\x02\x02\x02\x02", b"\x04\x04\x04\x04\x04\x04\x04\x04\x04\x04\x04\x04")
+    assert(rfc_result.matches(b"\x0d\x64\x0d\xf5\x8d\x78\x76\x6c\x08\xc0\x37\xa3\x4a\x8b\x53\xc9\xd0\x1e\xf0\x45\x2d\x75\xb6\x5e\xb5\x25\x20\xe9\x6b\x01\xe6\x59"))
+    rfc_result.close()
+    rfc_password.close()
+    rfc_key.close()
+    rfc_configuration.close()
+    print("PASS Luce hash/keyed API, retained results, secret ownership, HMAC, RFC HKDF and parallel Argon2id")
     return 0
