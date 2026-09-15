@@ -1,7 +1,7 @@
 # SHA-2 foundation validation
 
-First source checkpoint, September 15, 2026 UTC. No milestone-completion or
-security-review claim.
+Verified source `e779ff103c70af345fb639a2940b6564e761444a`, September 15, 2026 UTC.
+No milestone-completion or security-review claim.
 
 Passed locally on macOS arm64 in all six modes (native optimizations 0–3,
 C-debug, C-release):
@@ -35,9 +35,40 @@ Local logs: `build/final-correctness.log`, `build/final-sanitize.log` and
 `build/extended.log` (ignored). Tests used the pinned external compiler binaries;
 the separate fresh local bootstrap also passed. CI bootstraps fresh pinned sources.
 
-Pending: Linux/macOS hosted CI and verified read-only isolated VPS bundle.
-Tests must pass at the source revision being published;
-a pending row is not evidence.
+## Hosted and isolated second-host results
+
+[CI 34934494281](https://github.com/dymokomi/luce-crypto/actions/runs/34934494281)
+passed on both Linux x86_64 (Ubuntu 24.04, 2m41s) and macOS arm64 (macos-15,
+2m4s). Both hosts freshly bootstrapped the pinned compilers, passed all six modes,
+four harness tests, ASan/UBSan and all 18 extended file-stream cases. Downloaded
+logs show the same 2,272-case corpus digest in every mode and sanitizer run on
+Python 3.14.7; this was inspected rather than inferred from a green job summary.
+
+The CI Linux archive SHA-256 is
+`425cdf1fd09f9d4705d082dbd224e05c2cac41037ba2f4c2b96cea7d07a713be`.
+Verified locally and after upload: 20 unique allowlisted regular members (four
+binaries, three scripts, seven fixture/hash files, four license/provenance files,
+revision and hash manifest); 19 per-file hashes and exact source revision. No
+symlink/hardlink/path-traversal entries, compiler installation or live data.
+
+The existing Ubuntu 24.04 x86_64 VPS passed the four harness tests and complete
+prebuilt quick suite on Python 3.12.3: native/Luce API and eight independent workers,
+643 NIST + 1,629 generated cases (same corpus digest), and 15 file-stream cases.
+The 32 MiB extended profile ran locally/in CI, not on the VPS.
+
+VPS result: success, exit 0, 12.397 seconds elapsed / 3.106 seconds CPU, under
+unchanged 180-second, 25%-CPU, 512-MiB/no-swap and 64-task caps. Dynamic unprivileged
+user, private network/tmp, read-only inputs/host, protected home/live applications,
+no capabilities and idle I/O. These are whole-suite observations, not throughput,
+latency or capacity guarantees. No public listener or credentials were created.
+
+The exact temporary stage was removed after validating its revision and inactive,
+collected unit. All 32 running services, Caddy PID/activation/configuration hash and
+the existing site's HTTPS 200/ETag/content length matched the pre-test baseline.
+Removed inputs can be reproduced from the retained public test bundle. Ignored
+evidence lives under `build/ci-34934494281/`; no live access material is published.
+
+## Remaining gates
 
 Limits: no bit-oriented inputs, CAVP Monte Carlo suite, >4 GiB real stream test,
 ThreadSanitizer, exhaustive fuzzing, formal verification, side-channel or generated
