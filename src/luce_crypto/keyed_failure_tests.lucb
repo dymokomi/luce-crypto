@@ -1,0 +1,174 @@
+## Single-process allocation interception. No workers while memory.heap is replaced.
+import crypto
+import crypto_native as native
+import interop
+import memory
+
+struct Block:
+    var address: u8*?
+    var size: usize
+
+struct Heap: memory.Allocator:
+    var parent: memory.Allocator
+    var blocks: Block[32]
+    var attempts: usize
+    var fail_at: usize
+    var persistent: bool
+    var refused: usize
+    var live: usize
+    var erased: usize
+
+    mutating func arm(index: usize, persistent: bool = false):
+        self.attempts = 0
+        self.refused = 0
+        self.fail_at = index
+        self.persistent = persistent
+
+    pub mutating func allocate(size: usize, alignment: usize) -> u8[]?:
+        self.attempts += 1
+        if self.fail_at > 0 and (self.attempts == self.fail_at or (self.persistent and self.attempts >= self.fail_at)):
+            self.refused += 1
+            return none
+        let block = self.parent.allocate(size, alignment) else trap("upstream allocation failure")
+        assert(block.length == size and size > 0)
+        for other in self.blocks: assert(other.address != block.data)
+        for i in 0..<self.blocks.length:
+            if self.blocks[i].address == none:
+                self.blocks[i] = Block(address = block.data, size = size)
+                self.live += 1
+                return block
+        trap("allocation ledger exhausted")
+
+    pub mutating func resize(block: u8[], size: usize) -> bool:
+        discard(block)
+        discard(size)
+        trap("unexpected resize")
+
+    pub mutating func release(block: u8[]):
+        for i in 0..<self.blocks.length:
+            if self.blocks[i].address == block.data:
+                assert(self.blocks[i].size == block.length and self.live > 0)
+                ## All secret byte allocations in this harness are exactly 73.
+                ## Ownership headers/context allocations have other sizes.
+                if block.length == 73:
+                    for byte in block: assert(byte == 0, "owned secret allocation not erased")
+                    self.erased += 1
+                self.blocks[i] = Block()
+                self.live -= 1
+                self.parent.release(block)
+                return
+        trap("duplicate or foreign free")
+
+    func clean():
+        assert(self.live == 0)
+        for block in self.blocks: assert(block.address == none)
+
+func restore(original: memory.Allocator):
+    memory.heap = original
+
+func create(kind: usize, key: interop.Reference[crypto.Secret], input: const u8[]) -> interop.Reference[crypto.Secret]!:
+    if kind == 0: return try crypto.secret_from_bytes(input)
+    if kind == 1: return try crypto.random_secret(73)
+    return try crypto.hkdf(key, b"salt", b"info", 73)
+
+func creation(heap: Heap*, kind: usize, key: interop.Reference[crypto.Secret], input: const u8[], at: usize, persistent: bool) -> usize!:
+    heap.arm(at, persistent)
+    let result: interop.Reference[crypto.Secret]? = create(kind, key, input) catch failure:
+        assert(at > 0 and failure.code == memory.exhausted)
+        recover none
+    let attempts = heap.attempts
+    heap.arm(0)
+    if let owner = result:
+        assert(at == 0 and (try owner.value().length()) == 73)
+        owner.close()
+        owner.close()
+        owner.release()
+    else: assert(at > 0)
+    heap.clean()
+    return attempts
+
+pub func main(arguments: str[]) -> i32!:
+    discard(arguments)
+    var input: u8[73]
+    for i in 0..<input.length: input[i] = (u8)i
+    let key = try crypto.secret_from_bytes(input)
+    defer key.release()
+    let expected = try crypto.authenticate(key, b"input")
+    defer expected.release()
+    let original = memory.heap
+    var heap = Heap(parent = original)
+    memory.heap = &heap
+    defer restore(original)
+    var cases: usize
+    for kind in 0..<(usize)3:
+        let allocations = try creation(&heap, kind, key, input, 0, false)
+        assert(allocations == 3)
+        for persistent in [false, true]:
+            for at in 1..<allocations + 1:
+                assert((try creation(&heap, kind, key, input, at, persistent)) == at)
+                cases += 1
+    assert(heap.erased == 15)
+    for persistent in [false, true]:
+        heap.arm(1, persistent)
+        var refused = false
+        discard(native.make_hmac(input) catch failure:
+            assert(failure.code == memory.exhausted)
+            refused = true
+            recover native.Hmac())
+        assert(refused and heap.attempts == 1 and heap.refused == 1)
+        heap.arm(0)
+        heap.clean()
+        cases += 1
+        for at in [(usize)1, 2]:
+            var state = try crypto.Hmac(key)
+            try state.update(b"input")
+            assert(heap.live == 1)
+            heap.arm(at, persistent)
+            let failed: interop.Reference[crypto.Digest]? = state.finish() catch failure:
+                assert(failure.code == memory.exhausted)
+                recover none
+            assert(failed == none and heap.refused == 1 and heap.attempts == at and heap.live == 1)
+            heap.arm(0)
+            let result = try state.finish()
+            assert((try result.value().hexdigest()) == (try expected.value().hexdigest()))
+            result.release()
+            state.close()
+            heap.clean()
+            cases += 1
+    heap.arm(0)
+    var rejected = false
+    discard(native.make_hmac(input, "unknown") catch failure:
+        assert(failure.code == native.invalid)
+        rejected = true
+        recover native.Hmac())
+    assert(rejected and heap.attempts == 1)
+    heap.clean()
+    heap.arm(0)
+    for length in [(i64)-1, 65537]:
+        let invalid_random: interop.Reference[crypto.Secret]? = crypto.random_secret(length) catch failure:
+            assert(failure.code == native.invalid)
+            recover none
+        assert(invalid_random == none and heap.attempts == 0)
+    for length in [(i64)-1, 8161]:
+        let invalid_kdf: interop.Reference[crypto.Secret]? = crypto.hkdf(key, b"", b"", length) catch failure:
+            assert(failure.code == native.invalid)
+            recover none
+        assert(invalid_kdf == none and heap.attempts == 0)
+    ## The input owner is closed but alive: high-level APIs must return errors,
+    ## not trap through Reference.value().
+    key.close()
+    rejected = false
+    let closed_hmac: crypto.Hmac? = crypto.Hmac(key) catch failure:
+        assert(failure.code == interop.invalid)
+        rejected = true
+        recover none
+    assert(rejected and closed_hmac == none)
+    rejected = false
+    let closed_result: interop.Reference[crypto.Secret]? = crypto.hkdf(key, b"", b"", 73) catch failure:
+        assert(failure.code == interop.invalid)
+        rejected = true
+        recover none
+    assert(rejected and closed_result == none)
+    heap.clean()
+    print(f"PASS {cases} keyed allocation-failure paths, wipe-before-free, result-allocation retry and closed references")
+    return 0

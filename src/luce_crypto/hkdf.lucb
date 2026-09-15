@@ -1,0 +1,58 @@
+## RFC 5869 extract-and-expand. Not a password-hardening KDF.
+import luce_crypto.hmac as hmac
+import luce_crypto.sha2 as sha2
+import luce_crypto.secure as secure
+
+func overlap(input: const u8[], output: u8[]) -> bool:
+    if input.length == 0 or output.length == 0: return false
+    let a = (usize)input.data
+    let b = (usize)output.data
+    return b - a < input.length if a <= b else a - b < output.length
+
+func size(algorithm: str) -> usize!:
+    var state = try sha2.make_hash(algorithm)
+    defer state.close()
+    return try state.digest_size()
+
+pub func extract(input: const u8[], salt: const u8[], output: u8[], algorithm: str = "sha256") -> usize!:
+    let count = try size(algorithm)
+    if output.length < count: error(sha2.invalid, "HKDF extract output is too small")
+    if overlap(input, output) or overlap(salt, output): error(sha2.invalid, "HKDF input/output overlap")
+    ## Empty HMAC key and HashLen zero bytes have identical padded key blocks.
+    return try hmac.authenticate(salt, input, output, algorithm)
+
+pub func expand(key: const u8[], info: const u8[], output: u8[], algorithm: str = "sha256") -> !:
+    let count = try size(algorithm)
+    if key.length < count: error(sha2.invalid, "HKDF PRK must be at least HashLen bytes")
+    if output.length > 255 * count: error(sha2.invalid, "HKDF output exceeds 255 hash blocks")
+    if overlap(key, output) or overlap(info, output): error(sha2.invalid, "HKDF input/output overlap")
+    errdefer secure.wipe(output)
+    var previous: u8[64]
+    defer secure.wipe(previous)
+    var context = hmac.Context()
+    defer context.close()
+    var used: usize
+    var offset: usize
+    var counter: u8[1]
+    counter[0] = 1
+    while offset < output.length:
+        try context.start(key, algorithm)
+        try context.update(previous[..<used])
+        try context.update(info)
+        try context.update(counter)
+        discard(try context.finish(previous))
+        used = count
+        let take = count if count < output.length - offset else output.length - offset
+        for i in 0..<take: output[offset + i] = previous[i]
+        offset += take
+        if offset < output.length: counter[0] += 1
+
+pub func derive(input: const u8[], salt: const u8[], info: const u8[], output: u8[], algorithm: str = "sha256") -> !:
+    let count = try size(algorithm)
+    if output.length > 255 * count: error(sha2.invalid, "HKDF output exceeds 255 hash blocks")
+    if overlap(input, output) or overlap(salt, output) or overlap(info, output):
+        error(sha2.invalid, "HKDF input/output overlap")
+    var key: u8[64]
+    defer secure.wipe(key)
+    discard(try extract(input, salt, key, algorithm))
+    try expand(key[..<count], info, output, algorithm)

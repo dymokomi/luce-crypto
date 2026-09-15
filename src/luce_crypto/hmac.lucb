@@ -1,0 +1,106 @@
+## RFC 2104 HMAC with SHA-256/384/512. Context never returns key-derived values
+## by value and never calls the non-consuming hash snapshot API.
+import memory
+import luce_crypto.sha2 as sha2
+import luce_crypto.secure as secure
+
+pub struct Context:
+    var inner: sha2.Hash = sha2.Hash()
+    var outer: sha2.Hash = sha2.Hash()
+    var count: usize
+    var disposed: bool = true
+
+    pub mutating func start(key: const u8[], algorithm: str = "sha256") -> !:
+        self.close()
+        errdefer self.close()
+        self.inner = try sha2.make_hash(algorithm)
+        self.outer = try sha2.make_hash(algorithm)
+        self.count = try self.inner.digest_size()
+        let block: usize = 64 if self.count == 32 else 128
+        var key_block: u8[128]
+        defer secure.wipe(key_block)
+        if key.length > block:
+            var key_hash = try sha2.make_hash(algorithm)
+            defer key_hash.close()
+            try key_hash.update(key)
+            discard(try key_hash.finish(key_block))
+        else:
+            for i in 0..<key.length: key_block[i] = key[i]
+        for i in 0..<block: key_block[i] ^= 0x36
+        try self.inner.update(key_block[..<block])
+        for i in 0..<block: key_block[i] ^= 0x36 ^ 0x5c
+        try self.outer.update(key_block[..<block])
+        self.disposed = false
+
+    pub func size() -> usize!:
+        if self.disposed: error(sha2.closed, "HMAC is closed or finished")
+        return self.count
+
+    pub mutating func update(input: const u8[]) -> !:
+        discard(try self.size())
+        try self.inner.update(input)
+
+    pub mutating func finish(output: u8[]) -> usize!:
+        let count = try self.size()
+        if output.length < count: error(sha2.invalid, "HMAC output buffer is too small")
+        defer self.close()
+        var intermediate: u8[64]
+        defer secure.wipe(intermediate)
+        discard(try self.inner.finish(intermediate))
+        try self.outer.update(intermediate[..<count])
+        discard(try self.outer.finish(output))
+        return count
+
+    pub mutating func close():
+        self.inner.close()
+        self.outer.close()
+        self.count = 0
+        self.disposed = true
+
+pub func authenticate(key: const u8[], input: const u8[], output: u8[], algorithm: str = "sha256") -> usize!:
+    var context = Context()
+    defer context.close()
+    try context.start(key, algorithm)
+    if output.length < (try context.size()): error(sha2.invalid, "HMAC output buffer is too small")
+    try context.update(input)
+    return try context.finish(output)
+
+## Owning native handle; copies borrow and must not be closed independently.
+pub struct Hmac:
+    var context: Context*?
+
+    pub func size() -> usize!:
+        let context = self.context else error(sha2.closed, "HMAC is closed or finished")
+        return try context.size()
+
+    pub mutating func update(input: const u8[]) -> !:
+        let context = self.context else error(sha2.closed, "HMAC is closed or finished")
+        try context.update(input)
+
+    pub mutating func finish(output: u8[]) -> usize!:
+        let context = self.context else error(sha2.closed, "HMAC is closed or finished")
+        let count = try context.finish(output)
+        self.close()
+        return count
+
+    ## Full-length tags only; wrong-length tags are false, never accepted prefixes.
+    ## A verification attempt consumes the context even when the tag is invalid.
+    pub mutating func verify(expected: const u8[]) -> bool!:
+        var tag: u8[64]
+        defer secure.wipe(tag)
+        let count = try self.finish(tag)
+        return secure.equal(tag[..<count], expected)
+
+    pub mutating func close():
+        if let context = self.context:
+            context.close()
+            free(context) in memory.heap
+        self.context = none
+
+pub func make_hmac(key: const u8[], algorithm: str = "sha256") -> Hmac!:
+    let context = try new Context() in memory.heap
+    context.start(key, algorithm) catch failure:
+        context.close()
+        free(context) in memory.heap
+        error(failure.code, failure.message)
+    return Hmac(context = context)

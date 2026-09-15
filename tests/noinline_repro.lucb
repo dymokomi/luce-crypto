@@ -1,0 +1,10 @@
+## Audit reproducer only; not a runtime dependency or a passing assertion.
+noinline func must_remain_a_call(value: u32) -> u32:
+    return value +% 17
+
+export noinline func audit_caller(value: u32) -> u32:
+    return must_remain_a_call(value)
+
+pub func main(arguments: str[]) -> i32:
+    print(f"{audit_caller((u32)arguments.length)}")
+    return 0

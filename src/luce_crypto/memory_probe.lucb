@@ -1,0 +1,39 @@
+import luce_crypto.secure as secure
+
+## Address-taking retains inspectable function bodies in the pinned native
+## backend despite its noinline defect. This is a test aid, not a runtime barrier.
+var wipe_pointer: func(u8[]) -> unit = secure.wipe
+var equal_pointer: func(const u8[], const u8[]) -> bool = secure.equal
+var select_pointer: func(u8, u8, u8) -> u8 = secure.select_byte
+var dead_pointer: func() -> unit = probe_dead
+
+export noinline func probe_dead():
+    var data: u8[32]
+    for i in 0..<32: data[i] = 173
+    secure.wipe(data)
+
+export noinline func probe_wipe(data: u8[]):
+    secure.wipe(data)
+
+export noinline func probe_equal(left: const u8[], right: const u8[]) -> bool:
+    return secure.equal(left, right)
+
+export noinline func probe_select(mask: u8, yes: u8, no: u8) -> u8:
+    return secure.select_byte(mask, yes, no)
+
+pub func main(arguments: str[]) -> i32:
+    discard(arguments)
+    probe_dead()
+    dead_pointer()
+    var bytes: u8[34]
+    for i in 0..<bytes.length: bytes[i] = 173
+    probe_wipe(bytes[1..<33])
+    assert(bytes[0] == 173 and bytes[33] == 173)
+    for i in 1..<33: assert(bytes[i] == 0)
+    assert(probe_equal(b"a", b"a") and not probe_equal(b"a", b"b"))
+    assert(probe_select(255, 17, 31) == 17 and probe_select(0, 17, 31) == 31)
+    wipe_pointer(bytes[1..<33])
+    assert(equal_pointer(b"a", b"a") and not equal_pointer(b"a", b"b"))
+    assert(select_pointer(255, 17, 31) == 17 and select_pointer(0, 17, 31) == 31)
+    print("PASS memory code-generation probe")
+    return 0

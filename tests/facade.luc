@@ -1,4 +1,5 @@
 from crypto import Hasher, digest
+from crypto import Hmac, secret_from_bytes, random_secret, authenticate, hkdf
 
 pub func main(arguments: list[str]) -> int!:
     let state = Hasher()
@@ -23,5 +24,29 @@ pub func main(arguments: list[str]) -> int!:
         hasher.update(b"binary\x00\xffinput")
         assert(hasher.digest().bytes() == digest(b"binary\x00\xffinput", algorithm).bytes())
         hasher.close()
-    print("PASS Luce hash API, incremental snapshots, reset, retained bytes/text and disposal")
+    let key = secret_from_bytes(b"Jefe")
+    assert(key.length() == 4 and key.matches(b"Jefe") and not key.matches(b"Jeff"))
+    let revealed = key.reveal()
+    let expected = "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+    assert(authenticate(key, b"what do ya want for nothing?").hexdigest() == expected)
+    let mac = Hmac(key)
+    mac.update(b"what do ya want ")
+    let verification = Hmac(key)
+    key.close()
+    assert(revealed == b"Jefe")
+    mac.update(b"for nothing?")
+    let tag = mac.finish()
+    assert(tag.hexdigest() == expected)
+    verification.update(b"what do ya want for nothing?")
+    assert(verification.verify(tag.bytes()))
+    let ikm = secret_from_bytes(b"\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b")
+    let derived = hkdf(ikm, b"", b"", 42)
+    assert(derived.length() == 42)
+    assert(derived.matches(b"\x8d\xa4\xe7\x75\xa5\x63\xc1\x8f\x71\x5f\x80\x2a\x06\x3c\x5a\x31\xb8\xa1\x1f\x5c\x5e\xe1\x87\x9e\xc3\x45\x4e\x5f\x3c\x73\x8d\x2d\x9d\x20\x13\x95\xfa\xa4\xb6\x1a\x96\xc8"))
+    derived.close()
+    ikm.close()
+    let random = random_secret(32)
+    assert(random.length() == 32)
+    random.close()
+    print("PASS Luce hash/keyed API, snapshots, retained results, secret ownership, HMAC and RFC HKDF")
     return 0

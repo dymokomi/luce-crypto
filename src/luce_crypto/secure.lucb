@@ -1,0 +1,20 @@
+## Package-local memory primitives. Lengths/addresses are public inputs.
+## Volatile effects protect these exact accesses, not other copies or registers.
+pub noinline func wipe(data: u8[]):
+    for i in 0..<data.length:
+        let destination: volatile u8* = &data[i]
+        *destination = 0
+
+pub noinline func equal(left: const u8[], right: const u8[]) -> bool:
+    if left.length != right.length: return false
+    var difference: u32
+    for i in 0..<left.length:
+        let a: const volatile u8* = &left[i]
+        let b: const volatile u8* = &right[i]
+        difference |= (u32)(*a ^ *b)
+    return difference == 0
+
+## Bitwise blend; use mask 0 or 255 to select an entire byte. Mask derivation
+## belongs to the caller's audited protocol; no branching on selected bytes here.
+pub noinline func select_byte(mask: u8, yes: u8, no: u8) -> u8:
+    return (mask & yes) | (~mask & no)

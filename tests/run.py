@@ -11,6 +11,10 @@ ROOT = Path(__file__).resolve().parents[1]
 MODES = {f"native{i}": ["--native", "--opt", str(i)] for i in range(4)}
 MODES.update({"c": ["--backend=c"], "c-release": ["--backend=c", "--release"]})
 SOURCES = [("src/luce_crypto/native_tests.lucb", "native"), ("tests/driver.lucb", "driver"), ("tests/file_driver.lucb", "file-driver")]
+SOURCES += [("src/luce_crypto/keyed_tests.lucb", "keyed-native"),
+            ("src/luce_crypto/keyed_failure_tests.lucb", "keyed-failures"),
+            ("tests/keyed_driver.lucb", "keyed-driver"),
+            ("src/luce_crypto/memory_probe.lucb", "memory-probe")]
 
 
 def main():
@@ -23,6 +27,7 @@ def main():
     def run(command):
         subprocess.run([str(arg) for arg in command], cwd=ROOT, env=environment, check=True, timeout=180)
     run([sys.executable, "tests/test_vectors.py"])
+    run([sys.executable, "tests/test_keyed.py"])
     for mode, flags in MODES.items():
         if args.mode not in (mode, "all"): continue
         output = ROOT / "build" / mode

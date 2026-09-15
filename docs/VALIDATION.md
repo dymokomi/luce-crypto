@@ -1,5 +1,8 @@
 # SHA-2 foundation validation
 
+This is the historical unkeyed checkpoint. See [keyed validation](KEYED_VALIDATION.md)
+for the subsequent HMAC/HKDF/owned-secret work and its separately scoped evidence.
+
 Verified source `e779ff103c70af345fb639a2940b6564e761444a`, September 15, 2026 UTC.
 No milestone-completion or security-review claim.
 

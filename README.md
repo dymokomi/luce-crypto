@@ -1,8 +1,9 @@
 # luce-crypto
 
 Native Luce Base cryptography with an owning Luce API. MIT OR Apache-2.0.
-This first implementation provides byte-oriented, incremental SHA-256, SHA-384
-and SHA-512. No foreign cryptographic engine or subprocess is a runtime dependency.
+Provides byte-oriented incremental SHA-256/384/512, HMAC, HKDF and experimental
+owned secret buffers. No foreign cryptographic engine or subprocess is a runtime
+dependency. Keyed APIs are not yet approved for real credential custody.
 
 ```luce
 from crypto import Hasher, digest
@@ -46,10 +47,13 @@ Only byte-aligned inputs are supported. Unsupported algorithm names fail closed.
 Experimental, not security-reviewed or certified. These unkeyed hashes do not
 authenticate a publisher without a separately trusted expected digest/signature.
 Do not invent a MAC by prefixing a key, or use SHA-2 as a password KDF.
-`close()` is logical disposal, **not** a proven non-elidable secret wipe. State
-snapshots, runtime copies and timing/generated-code behavior have not been audited
-for secrets. HMAC/HKDF, Argon2id, AEAD, signatures, secure ownership and TLS are
-still required infrastructure work. No production keys or credentials are created.
+Native `close()` now uses volatile stores on the exact owned buffer/hash storage.
+That does **not** erase other copies, compiler spills/registers, swap or core dumps.
+The pinned native compiler ignores `noinline`; the package does not treat it as a
+security barrier. Functional tests and retained assembly are not independent
+security/side-channel review. Argon2id, AEAD, signatures, hardened custody and TLS
+remain required infrastructure work. No production keys or credentials are created.
+See [keyed APIs and memory limits](docs/KEYED.md).
 
 ## Tests
 
@@ -62,6 +66,7 @@ python3 tools/bootstrap.py
 python3 tests/run.py
 python3 tests/sanitize.py
 python3 tests/check_hashes.py build/native3/driver build/native3/file-driver --full
+python3 tools/codegen_probe.py
 ```
 
 Or supply `--base /path/to/luce-base --luce /path/to/luce` to `tests/run.py`.

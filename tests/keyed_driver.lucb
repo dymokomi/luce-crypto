@@ -1,0 +1,130 @@
+## Test-only binary vectors. Python/RFC oracles are outside the runtime library.
+import crypto_native as crypto
+import files
+import memory
+import c
+
+struct Reader:
+    var data: const u8[]
+    var position: usize
+
+    mutating func take(count: usize) -> const u8[]:
+        assert(count <= self.data.length - self.position)
+        let start = self.position
+        self.position += count
+        return self.data[start..<self.position]
+
+    mutating func number() -> usize:
+        let bytes = self.take(4)
+        var value: u32
+        for i in 0..<(usize)4: value |= (u32)bytes[i] << (i * 8)
+        return (usize)value
+
+    mutating func blob() -> const u8[]:
+        let count = self.number()
+        assert(count <= 65536)
+        return self.take(count)
+
+func equal(actual: const u8[], expected: const u8[]):
+    assert(actual.length == expected.length)
+    for i in 0..<actual.length: assert(actual[i] == expected[i])
+
+func mac_case(key: const u8[], data: const u8[], expected: const u8[], algorithm: str) -> !:
+    var output: u8[66]
+    for i in 0..<output.length: output[i] = 173
+    let count = try crypto.authenticate(key, data, output[1..], algorithm)
+    equal(output[1..<count + 1], expected)
+    assert(output[0] == 173)
+    for i in count + 1..<output.length: assert(output[i] == 173)
+    for offer in [(usize)1, 7, 64, 127, 4096]:
+        if data.length > 512 and offer < 64: continue
+        var copied_key: u8[1024]
+        assert(key.length <= copied_key.length)
+        for i in 0..<key.length: copied_key[i] = key[i]
+        var state = try crypto.make_hmac(copied_key[..<key.length], algorithm)
+        defer state.close()
+        crypto.wipe(copied_key)
+        var at: usize
+        var borrowed: u8[4096]
+        while at < data.length:
+            let take = offer if offer < data.length - at else data.length - at
+            for i in 0..<take: borrowed[i] = data[at + i]
+            try state.update(borrowed[..<take])
+            crypto.wipe(borrowed[..<take])
+            try state.update(b"")
+            at += take
+        assert((try state.size()) == count)
+        var rejected = false
+        discard(state.finish(output[..<count - 1]) catch failure:
+            assert(failure.code == crypto.invalid)
+            rejected = true
+            recover (usize)0)
+        assert(rejected)
+        discard(try state.finish(output))
+        equal(output[..<count], expected)
+        rejected = false
+        state.update(b"") catch failure:
+            assert(failure.code == crypto.closed)
+            rejected = true
+        assert(rejected)
+    var valid = try crypto.make_hmac(key, algorithm)
+    defer valid.close()
+    try valid.update(data)
+    assert(try valid.verify(expected))
+    for changed in [(usize)0, count // 2, count - 1, count]:
+        var invalid = try crypto.make_hmac(key, algorithm)
+        defer invalid.close()
+        try invalid.update(data)
+        for i in 0..<count: output[i] = expected[i]
+        if changed < count: output[changed] ^= 1
+        assert(not (try invalid.verify(output[..<(count - 1 if changed == count else count)])))
+
+func kdf_case(input: const u8[], salt: const u8[], info: const u8[], prk: const u8[], expected: const u8[], algorithm: str) -> !:
+    assert(expected.length <= 16320)
+    var output: u8[16322]
+    for i in 0..<output.length: output[i] = 173
+    try crypto.hkdf(input, salt, info, output[1..<expected.length + 1], algorithm)
+    equal(output[1..<expected.length + 1], expected)
+    assert(output[0] == 173)
+    for i in expected.length + 1..<output.length: assert(output[i] == 173)
+    var key: u8[66]
+    for i in 0..<key.length: key[i] = 173
+    let count = try crypto.hkdf_extract(input, salt, key[1..], algorithm)
+    equal(key[1..<count + 1], prk)
+    assert(key[0] == 173)
+    for i in count + 1..<key.length: assert(key[i] == 173)
+    try crypto.hkdf_expand(key[1..<count + 1], info, output[..<expected.length], algorithm)
+    equal(output[..<expected.length], expected)
+    crypto.wipe(key)
+    crypto.wipe(output)
+
+pub func main(arguments: str[]) -> i32!:
+    assert(arguments.length == 2)
+    let bytes = try files.read_limit((c.str)arguments[1], 16777216)
+    defer free(bytes) in memory.heap
+    var reader = Reader(data = bytes)
+    assert((str)reader.take(8) == "LCKEY01\0")
+    let records = reader.number()
+    assert(records > 0 and records <= 64)
+    for i in 0..<records:
+        let identity = reader.number()
+        let kind = reader.number()
+        let algorithm_id = reader.number()
+        assert(algorithm_id == 256 or algorithm_id == 384 or algorithm_id == 512)
+        let algorithm = "sha256" if algorithm_id == 256 else ("sha384" if algorithm_id == 384 else "sha512")
+        let key = reader.blob()
+        let data = reader.blob()
+        let info = reader.blob()
+        let first = reader.blob()
+        let second = reader.blob()
+        assert(first.length == algorithm_id // 8)
+        print(f"CASE {identity}")
+        if kind == 1:
+            assert(info.length == 0 and second.length == 0)
+            try mac_case(key, data, first, algorithm)
+        else:
+            assert(kind == 2)
+            try kdf_case(key, data, info, first, second, algorithm)
+    assert(reader.position == bytes.length)
+    print(f"PASS keyed batch {records}")
+    return 0

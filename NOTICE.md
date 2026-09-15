@@ -1,6 +1,6 @@
 # Provenance
 
-Original Luce Base SHA-2 implementation, Copyright 2026 Dy Mokomi,
+Original Luce Base SHA-2/HMAC/HKDF and memory implementation, Copyright 2026 Dy Mokomi,
 MIT OR Apache-2.0. No C/C++/Rust cryptographic engine is included or linked.
 
 Algorithm definitions and numeric constants: NIST FIPS 180-4 (August 2015),
@@ -20,5 +20,15 @@ Informal use of these vectors is **not** NIST/CAVP/FIPS certification.
 
 Build/test/bootstrap/bundle scaffolding follows the MIT OR Apache-2.0
 `dymokomi/luce-compress` and `dymokomi/luce-pkg-server` patterns by the same author.
-Python `hashlib` is an independent development-test oracle only. The Base/Luce
+HMAC is implemented from RFC 2104; HKDF from RFC 5869. Numeric input/output facts
+in `tests/rfc_keyed.py` come from RFC 4231 section 4 (SHA-256/384/512 cases 1–7)
+and RFC 5869 appendix A.1–A.3 (SHA-256). These fixtures are separately attributed;
+no RFC prose, implementation code or foreign engine is included. RFC 4231 case 5
+provides a truncated prefix, checked against the full independent oracle tag.
+
+Standards: https://www.rfc-editor.org/rfc/rfc2104.html,
+https://www.rfc-editor.org/rfc/rfc4231.html,
+https://www.rfc-editor.org/rfc/rfc5869.html.
+
+Python `hashlib`/`hmac` are independent development-test oracles only. The Base/Luce
 toolchains and their existing runtime/OS bindings remain separate dependencies.

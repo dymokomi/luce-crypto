@@ -1,7 +1,13 @@
 ## Public native facade; arithmetic/test helpers are not exported here.
 import luce_crypto.sha2 as sha2
+import luce_crypto.hmac as mac
+import luce_crypto.hkdf as kdf
+import luce_crypto.secret as secret
+import luce_crypto.secure as secure
 
 pub type Hash = sha2.Hash
+pub type Hmac = mac.Hmac
+pub type Secret = secret.Buffer
 pub let invalid = sha2.invalid
 pub let closed = sha2.closed
 pub let length_exceeded = sha2.length_exceeded
@@ -11,3 +17,30 @@ pub func make_hash(algorithm: str = "sha256") -> Hash!:
 
 pub func digest(input: const u8[], output: u8[], algorithm: str = "sha256") -> usize!:
     return try sha2.digest(input, output, algorithm)
+
+pub func make_hmac(key: const u8[], algorithm: str = "sha256") -> Hmac!:
+    return try mac.make_hmac(key, algorithm)
+
+pub func authenticate(key: const u8[], input: const u8[], output: u8[], algorithm: str = "sha256") -> usize!:
+    return try mac.authenticate(key, input, output, algorithm)
+
+pub func hkdf_extract(input: const u8[], salt: const u8[], output: u8[], algorithm: str = "sha256") -> usize!:
+    return try kdf.extract(input, salt, output, algorithm)
+
+pub func hkdf_expand(key: const u8[], info: const u8[], output: u8[], algorithm: str = "sha256") -> !:
+    try kdf.expand(key, info, output, algorithm)
+
+pub func hkdf(input: const u8[], salt: const u8[], info: const u8[], output: u8[], algorithm: str = "sha256") -> !:
+    try kdf.derive(input, salt, info, output, algorithm)
+
+pub func secret_from_bytes(input: const u8[]) -> Secret!:
+    return try secret.from_bytes(input)
+
+pub func random_secret(count: usize) -> Secret!:
+    return try secret.random(count)
+
+pub func wipe(data: u8[]):
+    secure.wipe(data)
+
+pub func equal(left: const u8[], right: const u8[]) -> bool:
+    return secure.equal(left, right)

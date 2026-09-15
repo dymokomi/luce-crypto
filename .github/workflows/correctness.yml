@@ -1,4 +1,4 @@
-name: Native SHA-2 correctness
+name: Native crypto correctness
 on:
   push:
   pull_request:
@@ -57,6 +57,9 @@ jobs:
         run: |
           set -o pipefail
           python3 tests/check_hashes.py build/native3/driver build/native3/file-driver --full 2>&1 | tee build/extended.log
+      - name: Retain generated memory bodies for review
+        working-directory: luce-crypto
+        run: python3 tools/codegen_probe.py
       - name: Bundle Linux tests
         if: runner.os == 'Linux'
         working-directory: luce-crypto
@@ -77,3 +80,4 @@ jobs:
             luce-crypto/build/sanitize.log
             luce-crypto/build/extended.log
             luce-crypto/build/failures/
+            luce-crypto/build/codegen/

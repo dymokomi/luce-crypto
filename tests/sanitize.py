@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 from run import SOURCES, ROOT
 from check_hashes import check, check_files, checked
+from check_keyed import check_keyed
 
 
 def main():
@@ -25,9 +26,11 @@ def main():
         run([os.environ.get("CC", "cc"), "-std=gnu11", "-O1", "-g", "-w", "-fno-strict-aliasing",
              "-fsanitize=address,undefined", "-fno-omit-frame-pointer", "-I", runtime,
              generated, runtime / "lucb_rt.c", "-pthread", "-lm", "-o", output / name])
-    print(checked([output / "native"]).stdout.decode(), end="", flush=True)
+    for name in ("native", "keyed-native", "keyed-failures", "memory-probe"):
+        print(checked([output / name]).stdout.decode(), end="", flush=True)
     check(output / "driver")
     check_files(output / "file-driver")
+    check_keyed(output / "keyed-driver")
     print("PASS AddressSanitizer + UndefinedBehaviorSanitizer", flush=True)
 
 

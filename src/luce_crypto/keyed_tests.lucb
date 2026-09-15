@@ -1,0 +1,212 @@
+import crypto_native as crypto
+import luce_crypto.secret as secret
+import luce_crypto.secure as secure
+import memory
+import thread
+
+struct Audit: memory.Allocator:
+    var parent: memory.Allocator
+    var address: u8*?
+    var size: usize
+    var releases: usize
+    var refuse: bool
+
+    pub mutating func allocate(size: usize, alignment: usize) -> u8[]?:
+        assert(self.address == none)
+        if self.refuse: return none
+        let bytes = self.parent.allocate(size, alignment) else trap("upstream allocation failed")
+        self.address = bytes.data
+        self.size = size
+        for i in 0..<bytes.length: bytes[i] = 173
+        return bytes
+
+    pub mutating func resize(block: u8[], size: usize) -> bool:
+        discard(block)
+        discard(size)
+        trap("secret must not resize")
+
+    pub mutating func release(block: u8[]):
+        assert(self.address == block.data and self.size == block.length)
+        for byte in block: assert(byte == 0, "secret not wiped before allocator release")
+        self.parent.release(block)
+        self.address = none
+        self.releases += 1
+
+func partial_entropy(output: u8[]) -> !:
+    assert(output.length == 73)
+    for i in 0..<37: output[i] = 221
+    error(crypto.invalid, "injected entropy failure after partial fill")
+
+func known_entropy(output: u8[]) -> !:
+    for i in 0..<output.length: output[i] = (u8)i
+
+func memory_tests() -> !:
+    var audit = Audit(parent = memory.heap)
+    for count in [(usize)0, 1, 73, 65536]:
+        var data = try secret.create(count, &audit)
+        assert((try data.bytes()).length == count)
+        for byte in try data.bytes(): assert(byte == 0)
+        let writable = try data.writable()
+        for i in 0..<writable.length: writable[i] = 221
+        data.close()
+        data.close()
+        assert(audit.address == none)
+        var rejected = false
+        discard(data.bytes() catch failure:
+            assert(failure.code == crypto.closed)
+            rejected = true
+            recover b"")
+        assert(rejected)
+    assert(audit.releases == 3)
+    var rejected = false
+    discard(secret.random(73, partial_entropy, &audit) catch failure:
+        assert(failure.code == crypto.invalid)
+        rejected = true
+        recover secret.Buffer())
+    assert(rejected and audit.address == none and audit.releases == 4)
+    var generated = try secret.random(73, known_entropy, &audit)
+    for i in 0..<73: assert((try generated.bytes())[i] == (u8)i)
+    generated.close()
+    audit.refuse = true
+    rejected = false
+    discard(secret.create(73, &audit) catch failure:
+        assert(failure.code == memory.exhausted)
+        rejected = true
+        recover secret.Buffer())
+    assert(rejected and audit.address == none and audit.releases == 5)
+    rejected = false
+    discard(secret.create(65537, &audit) catch failure:
+        assert(failure.code == crypto.invalid)
+        rejected = true
+        recover secret.Buffer())
+    assert(rejected and audit.address == none)
+    audit.refuse = false
+    var input: u8[73]
+    for i in 0..<input.length: input[i] = (u8)i
+    var copied = try secret.from_bytes(input, &audit)
+    secure.wipe(input)
+    for i in 0..<73: assert((try copied.bytes())[i] == (u8)i)
+    copied.close()
+    assert(audit.address == none and audit.releases == 6)
+    var random = try crypto.random_secret(32)
+    assert((try random.bytes()).length == 32)
+    random.close()
+    var empty_random = try crypto.random_secret(0)
+    assert((try empty_random.bytes()).length == 0)
+    empty_random.close()
+    ## OS call success/lifecycle only: randomness quality is not tested by samples.
+    var left: u8[256]
+    var right: u8[256]
+    for i in 0..<256:
+        left[i] = (u8)i
+        right[i] = (u8)i
+    assert(secure.equal(left, right) and secure.equal(b"", b""))
+    assert(not secure.equal(left, right[..<255]))
+    for i in 0..<256:
+        right[i] ^= 1
+        assert(not secure.equal(left, right))
+        right[i] ^= 1
+        assert(secure.select_byte(255, (u8)i, (u8)(255 - i)) == (u8)i)
+        assert(secure.select_byte(0, (u8)i, (u8)(255 - i)) == (u8)(255 - i))
+
+func boundaries() -> !:
+    var output: u8[16321]
+    var key: u8[64]
+    for algorithm in ["sha256", "sha384", "sha512"]:
+        var state = try crypto.make_hash(algorithm)
+        try state.update(b"abc")
+        let count = try state.digest_size()
+        var rejected = false
+        discard(state.finish(output[..<count - 1]) catch failure:
+            assert(failure.code == crypto.invalid)
+            rejected = true
+            recover (usize)0)
+        assert(rejected)
+        discard(try state.finish(output))
+        discard(try crypto.digest(b"abc", key, algorithm))
+        assert(secure.equal(output[..<count], key[..<count]))
+        rejected = false
+        discard(state.finish(output) catch failure:
+            assert(failure.code == crypto.closed)
+            rejected = true
+            recover (usize)0)
+        assert(rejected)
+        for invalid_case in 0..<8:
+            for i in 0..<output.length: output[i] = 173
+            rejected = false
+            if invalid_case == 0:
+                crypto.hkdf_expand(key[..<count - 1], b"", output[..<1], algorithm) catch failure:
+                    assert(failure.code == crypto.invalid)
+                    rejected = true
+            elif invalid_case == 1:
+                crypto.hkdf_expand(key[..<count], b"", output[..<255 * count + 1], algorithm) catch failure:
+                    assert(failure.code == crypto.invalid)
+                    rejected = true
+            elif invalid_case == 2:
+                crypto.hkdf(b"input", b"salt", b"info", output[..<255 * count + 1], algorithm) catch failure:
+                    assert(failure.code == crypto.invalid)
+                    rejected = true
+            elif invalid_case == 3:
+                discard(crypto.hkdf_extract(b"input", b"salt", output[..<count - 1], algorithm) catch failure:
+                    assert(failure.code == crypto.invalid)
+                    rejected = true
+                    recover (usize)0)
+            elif invalid_case == 4:
+                crypto.hkdf_expand(output[..<count], b"", output[1..<count + 1], algorithm) catch failure:
+                    assert(failure.code == crypto.invalid)
+                    rejected = true
+            elif invalid_case == 5:
+                crypto.hkdf_expand(key[..<count], output[..<count], output[1..<count + 1], algorithm) catch failure:
+                    assert(failure.code == crypto.invalid)
+                    rejected = true
+            else:
+                discard(crypto.hkdf_extract(output[..<count] if invalid_case == 6 else b"input",
+                    output[..<count] if invalid_case == 7 else b"salt", output[1..<count + 1], algorithm) catch failure:
+                    assert(failure.code == crypto.invalid)
+                    rejected = true
+                    recover (usize)0)
+            assert(rejected)
+            for byte in output: assert(byte == 173)
+        for input_index in 0..<3:
+            var rejected_overlap = false
+            crypto.hkdf(output[..<count] if input_index == 0 else b"input",
+                output[..<count] if input_index == 1 else b"salt",
+                output[..<count] if input_index == 2 else b"info", output[1..<count + 1], algorithm) catch failure:
+                assert(failure.code == crypto.invalid)
+                rejected_overlap = true
+            assert(rejected_overlap)
+            for byte in output: assert(byte == 173)
+    for algorithm in ["", "SHA256", "sha1", "sha512/256"]:
+        var rejected = false
+        discard(crypto.make_hmac(b"key", algorithm) catch failure:
+            assert(failure.code == crypto.invalid)
+            rejected = true
+            recover crypto.Hmac())
+        assert(rejected)
+
+func worker(raw: void*?):
+    discard(raw)
+    for iteration in 0..<32:
+        var owned_key = crypto.random_secret(73) catch failure: trap(failure.message)
+        defer owned_key.close()
+        let key = owned_key.bytes() catch failure: trap(failure.message)
+        for algorithm in ["sha256", "sha384", "sha512"]:
+            var output: u8[64]
+            let count = crypto.authenticate(key, b"worker", output, algorithm) catch failure: trap(failure.message)
+            var state = crypto.make_hmac(key, algorithm) catch failure: trap(failure.message)
+            defer state.close()
+            state.update(b"worker") catch failure: trap(failure.message)
+            assert(state.verify(output[..<count]) catch failure: trap(failure.message))
+            var derived: u8[42]
+            crypto.hkdf(key, b"salt", b"worker", derived, algorithm) catch failure: trap(failure.message)
+            secure.wipe(derived)
+
+pub func main(arguments: str[]) -> i32!:
+    discard(arguments)
+    try memory_tests()
+    try boundaries()
+    var workers: thread.Handle[8]
+    for i in 0..<8: workers[i] = try thread.spawn(worker, none, stack = 524288)
+    for handle in workers: try handle.join()
+    print("PASS native secrets, wipe-before-free, partial entropy failure, KDF boundaries, tag comparison and 8 workers")
+    return 0

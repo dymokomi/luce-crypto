@@ -15,8 +15,8 @@ def main():
     parser.add_argument("--binaries", type=Path, default=ROOT / "build/native3")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    programs = ["native", "facade", "driver", "file-driver"]
-    scripts = ["run_prebuilt.py", "check_hashes.py", "test_vectors.py"]
+    programs = ["native", "facade", "driver", "file-driver", "keyed-native", "keyed-failures", "keyed-driver", "memory-probe"]
+    scripts = ["run_prebuilt.py", "check_hashes.py", "test_vectors.py", "check_keyed.py", "rfc_keyed.py", "test_keyed.py"]
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     manifest = []
     with tarfile.open(args.output, "w:gz") as bundle:
