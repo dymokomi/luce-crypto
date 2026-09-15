@@ -77,5 +77,35 @@ The separate extended native-opt-3 SHA-2 file suite passed all 18 cases through
 32 MiB + 3 bytes (`build/keyed-extended.log`). Python 3.14.6; compiler pins remain
 unchanged. Generated-code probe passed; observations are under `build/codegen/`
 and `build/codegen.log`. Neither language repository was modified.
-Hosted Linux/macOS and isolated VPS results for this keyed checkpoint are pending;
-older SHA-2 results must not be attributed to this source.
+Verified source: `5aa084e76d8a64ee8c31ca39ddeafcbd1cbe420c`.
+[CI 34936762031](https://github.com/dymokomi/luce-crypto/actions/runs/34936762031)
+passed on Linux x86_64 (3m40s) and macOS arm64 (2m58s). Downloaded logs confirm
+all six modes, eleven harness tests, both complete oracle corpora, the native/
+Luce/worker/failure suites, ASan/UBSan and the 18-case extended file profile.
+The generated-body probe passed on both architectures; Linux noinline assembly
+also directly contains the +17 computation in `main` at all four native levels.
+These observations do not close the security-review exclusions above.
+
+The Linux archive SHA-256 is
+`02c498b601a371590606cee51f5978e90cef9bef749cd9cd127e53c25aebb4e1`.
+Verified before execution both locally and remotely: 27 unique allowlisted regular
+members, 26 per-file hashes, full source revision, permitted modes/size bounds,
+and all eight executables' ELF64 little-endian x86_64 headers. Contents: eight
+binaries, six test scripts, seven fixture/hash files, four license/provenance
+files, revision and hash manifest. No compiler installation or real credentials.
+
+The existing Ubuntu 24.04 VPS passed all eleven harness tests and the complete
+quick prebuilt suite on Python 3.12.3, including the 753 keyed cases and 24
+allocation-failure paths. Both corpus hashes exactly match local Python 3.14.6
+and hosted Python 3.14.7. Extended files were local/CI only, not the VPS.
+Systemd reported success, exit 0, 20.195 seconds elapsed / 5.057 seconds CPU under
+unchanged 180-second, 25%-CPU, 512-MiB/no-swap, 64-task limits. Dynamic user,
+private network/tmp, read-only host/input, protected home/live apps, no capabilities,
+no core dumps and idle I/O. These measurements are not production capacity claims.
+
+After confirming the unit was inactive/collected and validating the exact revision
+and non-symlink staging directory, only that temporary stage was removed. Inputs
+can be recreated from the retained archive. All 32 running services, Caddy PID/
+activation/configuration hash and HTTPS 200/ETag/content length remained unchanged.
+Ignored evidence: `build/ci-34936762031/`. No live listener, account, credential,
+proxy/DNS/firewall change, service restart or paid provisioning occurred.
