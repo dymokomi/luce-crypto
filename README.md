@@ -51,8 +51,9 @@ Native `close()` now uses volatile stores on the exact owned buffer/hash storage
 That does **not** erase other copies, compiler spills/registers, swap or core dumps.
 The pinned native compiler ignores `noinline`; the package does not treat it as a
 security barrier. Functional tests and retained assembly are not independent
-security/side-channel review. Argon2id cost calibration, AEAD, signatures, hardened custody and TLS
-remain required infrastructure work. No production keys or credentials are created.
+security/side-channel review. Experimental ChaCha20-Poly1305 / XChaCha20-Poly1305 and SHA-1 (Git object
+IDs only) are implemented. Argon2id cost calibration, ML-DSA-65 signatures,
+hardened custody and TLS remain required infrastructure work. No production keys or credentials are created.
 See [keyed APIs and memory limits](docs/KEYED.md).
 See [Argon2id APIs, admission budgets and cancellation](docs/ARGON2ID.md).
 

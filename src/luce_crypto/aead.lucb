@@ -1,0 +1,100 @@
+## RFC 8439 ChaCha20-Poly1305 and XChaCha20-Poly1305 (192-bit nonce).
+import memory
+import luce_crypto.chacha as chacha
+import luce_crypto.poly1305 as poly
+import luce_crypto.secure as secure
+import luce_crypto.sha2 as sha2
+
+pub let invalid = sha2.invalid
+pub let closed = sha2.closed
+pub let length_exceeded = sha2.length_exceeded
+pub let forged: ErrorCode = ErrorCode.package(5)
+pub let max_message: usize = 16777216
+
+func pad16(count: usize) -> usize:
+    return (16 - (count & 15)) & 15
+
+func write_mac(aad: const u8[], ciphertext: const u8[], buffer: u8[]):
+    var at: usize
+    for i in 0..<aad.length:
+        buffer[at] = aad[i]
+        at += 1
+    at += pad16(aad.length)
+    for i in 0..<ciphertext.length:
+        buffer[at] = ciphertext[i]
+        at += 1
+    at += pad16(ciphertext.length)
+    var len_aad = (u64)aad.length
+    var len_ct = (u64)ciphertext.length
+    for i in 0..<(usize)8:
+        buffer[at + i] = (u8)(len_aad >> (i * 8))
+        buffer[at + 8 + i] = (u8)(len_ct >> (i * 8))
+
+func ietf_nonce(nonce: const u8[], out: u8[]) -> !:
+    if nonce.length == 12:
+        for i in 0..<(usize)12: out[i] = nonce[i]
+        return
+    if nonce.length != 24: error(invalid, "AEAD nonce must be 12 or 24 bytes")
+    for i in 0..<(usize)4: out[i] = 0
+    for i in 0..<(usize)8: out[4 + i] = nonce[16 + i]
+
+func prepare_key(key: const u8[], nonce: const u8[], subkey: u8[], n12: u8[]) -> !:
+    if key.length != 32: error(invalid, "AEAD key must be 32 bytes")
+    if nonce.length == 12:
+        for i in 0..<(usize)32: subkey[i] = key[i]
+        try ietf_nonce(nonce, n12)
+        return
+    if nonce.length != 24: error(invalid, "AEAD nonce must be 12 or 24 bytes")
+    try chacha.hchacha20(key, nonce[..<16], subkey)
+    try ietf_nonce(nonce, n12)
+
+func poly_key(subkey: const u8[], n12: const u8[], otk: u8[]) -> !:
+    var zeros: u8[64]
+    try chacha.xor(subkey, n12, 0, zeros, otk)
+
+pub func seal(key: const u8[], nonce: const u8[], aad: const u8[], plaintext: const u8[], ciphertext: u8[], tag: u8[]) -> !:
+    if ciphertext.length < plaintext.length or tag.length < 16:
+        error(invalid, "AEAD output buffers are too small")
+    if plaintext.length > max_message or aad.length > max_message:
+        error(length_exceeded, "AEAD message exceeds 16 MiB")
+    var subkey: u8[32]
+    var n12: u8[12]
+    var otk: u8[64]
+    defer secure.wipe(subkey)
+    defer secure.wipe(n12)
+    defer secure.wipe(otk)
+    try prepare_key(key, nonce, subkey, n12)
+    try poly_key(subkey, n12, otk)
+    try chacha.xor(subkey, n12, 1, plaintext, ciphertext)
+    let mac_len = aad.length + pad16(aad.length) + plaintext.length + pad16(plaintext.length) + 16
+    let mac = try alloc u8[mac_len] in memory.heap
+    defer free(mac) in memory.heap
+    for i in 0..<mac_len: mac[i] = 0
+    write_mac(aad, ciphertext[..<plaintext.length], mac)
+    try poly.authenticate(otk[..<32], mac, tag)
+
+pub func open(key: const u8[], nonce: const u8[], aad: const u8[], ciphertext: const u8[], tag: const u8[], plaintext: u8[]) -> !:
+    if plaintext.length < ciphertext.length or tag.length < 16:
+        error(invalid, "AEAD output buffers are too small")
+    if ciphertext.length > max_message or aad.length > max_message:
+        error(length_exceeded, "AEAD message exceeds 16 MiB")
+    var subkey: u8[32]
+    var n12: u8[12]
+    var otk: u8[64]
+    var expected: u8[16]
+    defer secure.wipe(subkey)
+    defer secure.wipe(n12)
+    defer secure.wipe(otk)
+    defer secure.wipe(expected)
+    try prepare_key(key, nonce, subkey, n12)
+    try poly_key(subkey, n12, otk)
+    let mac_len = aad.length + pad16(aad.length) + ciphertext.length + pad16(ciphertext.length) + 16
+    let mac = try alloc u8[mac_len] in memory.heap
+    defer free(mac) in memory.heap
+    for i in 0..<mac_len: mac[i] = 0
+    write_mac(aad, ciphertext, mac)
+    try poly.authenticate(otk[..<32], mac, expected)
+    if not secure.equal(expected, tag[..<16]):
+        for i in 0..<ciphertext.length: plaintext[i] = 0
+        error(forged, "AEAD tag mismatch")
+    try chacha.xor(subkey, n12, 1, ciphertext, plaintext)

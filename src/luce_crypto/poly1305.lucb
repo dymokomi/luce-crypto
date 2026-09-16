@@ -1,0 +1,132 @@
+## RFC 8439 Poly1305 one-time authenticator. Not a general MAC.
+import luce_crypto.secure as secure
+import luce_crypto.sha2 as sha2
+
+func le32(bytes: const u8[], at: usize) -> u32:
+    return (u32)bytes[at] | ((u32)bytes[at + 1] << 8) | ((u32)bytes[at + 2] << 16) | ((u32)bytes[at + 3] << 24)
+
+func mul(h: u64[], r: u64[]):
+    let s1 = r[1] * 5
+    let s2 = r[2] * 5
+    let s3 = r[3] * 5
+    let s4 = r[4] * 5
+    var t0 = h[0] * r[0] + h[1] * s4 + h[2] * s3 + h[3] * s2 + h[4] * s1
+    var t1 = h[0] * r[1] + h[1] * r[0] + h[2] * s4 + h[3] * s3 + h[4] * s2
+    var t2 = h[0] * r[2] + h[1] * r[1] + h[2] * r[0] + h[3] * s4 + h[4] * s3
+    var t3 = h[0] * r[3] + h[1] * r[2] + h[2] * r[1] + h[3] * r[0] + h[4] * s4
+    var t4 = h[0] * r[4] + h[1] * r[3] + h[2] * r[2] + h[3] * r[1] + h[4] * r[0]
+    var carry = t0 >> 26
+    h[0] = t0 & 0x3ffffff
+    t1 += carry
+    carry = t1 >> 26
+    h[1] = t1 & 0x3ffffff
+    t2 += carry
+    carry = t2 >> 26
+    h[2] = t2 & 0x3ffffff
+    t3 += carry
+    carry = t3 >> 26
+    h[3] = t3 & 0x3ffffff
+    t4 += carry
+    carry = t4 >> 26
+    h[4] = t4 & 0x3ffffff
+    h[0] += carry * 5
+    carry = h[0] >> 26
+    h[0] &= 0x3ffffff
+    h[1] += carry
+
+func absorb(h: u64[], r: u64[], block: const u8[], hibit: u64):
+    let t0 = (u64)le32(block, 0)
+    let t1 = (u64)le32(block, 4)
+    let t2 = (u64)le32(block, 8)
+    let t3 = (u64)le32(block, 12)
+    h[0] += t0 & 0x3ffffff
+    h[1] += ((t0 >> 26) | (t1 << 6)) & 0x3ffffff
+    h[2] += ((t1 >> 20) | (t2 << 12)) & 0x3ffffff
+    h[3] += ((t2 >> 14) | (t3 << 18)) & 0x3ffffff
+    h[4] += (t3 >> 8) | hibit
+    mul(h, r)
+
+pub func authenticate(key: const u8[], message: const u8[], tag: u8[]) -> !:
+    if key.length != 32 or tag.length < 16: error(sha2.invalid, "Poly1305 requires a 32-byte key and 16-byte tag")
+    if message.length > 16777216: error(sha2.length_exceeded, "Poly1305 message exceeds 16 MiB")
+    var r: u64[5]
+    var h: u64[5]
+    defer secure.wipe(u8[]((u8*)&r[0], sizeof(r)))
+    defer secure.wipe(u8[]((u8*)&h[0], sizeof(h)))
+    let k0 = (u64)le32(key, 0)
+    let k1 = (u64)le32(key, 4)
+    let k2 = (u64)le32(key, 8)
+    let k3 = (u64)le32(key, 12)
+    r[0] = k0 & 0x3ffffff
+    r[1] = ((k0 >> 26) | (k1 << 6)) & 0x3ffff03
+    r[2] = ((k1 >> 20) | (k2 << 12)) & 0x3ffc0ff
+    r[3] = ((k2 >> 14) | (k3 << 18)) & 0x3f03fff
+    r[4] = (k3 >> 8) & 0x00fffff
+    var tail: u8[16]
+    var at: usize
+    while message.length - at >= 16:
+        absorb(h, r, message[at..<at + 16], 1 << 24)
+        at += 16
+    if at != message.length:
+        for i in 0..<(usize)16: tail[i] = 0
+        let rest = message.length - at
+        for i in 0..<rest: tail[i] = message[at + i]
+        tail[rest] = 1
+        absorb(h, r, tail, 0)
+    var carry = h[1] >> 26
+    h[1] &= 0x3ffffff
+    h[2] += carry
+    carry = h[2] >> 26
+    h[2] &= 0x3ffffff
+    h[3] += carry
+    carry = h[3] >> 26
+    h[3] &= 0x3ffffff
+    h[4] += carry
+    carry = h[4] >> 26
+    h[4] &= 0x3ffffff
+    h[0] += carry * 5
+    carry = h[0] >> 26
+    h[0] &= 0x3ffffff
+    h[1] += carry
+    var g: u64[5]
+    g[0] = h[0] + 5
+    carry = g[0] >> 26
+    g[0] &= 0x3ffffff
+    g[1] = h[1] + carry
+    carry = g[1] >> 26
+    g[1] &= 0x3ffffff
+    g[2] = h[2] + carry
+    carry = g[2] >> 26
+    g[2] &= 0x3ffffff
+    g[3] = h[3] + carry
+    carry = g[3] >> 26
+    g[3] &= 0x3ffffff
+    let g4 = (i64)h[4] + (i64)carry - (1 << 26)
+    g[4] = (u64)g4
+    let mask = (u64)(g4 >> 63)
+    let nmask = ~mask
+    for i in 0..<(usize)5: h[i] = (h[i] & mask) | (g[i] & nmask)
+    let h0 = (h[0] | (h[1] << 26)) & 0xffffffff
+    let h1 = ((h[1] >> 6) | (h[2] << 20)) & 0xffffffff
+    let h2 = ((h[2] >> 12) | (h[3] << 14)) & 0xffffffff
+    let h3 = ((h[3] >> 18) | (h[4] << 8)) & 0xffffffff
+    var acc = h0 + (u64)le32(key, 16)
+    tag[0] = (u8)acc
+    tag[1] = (u8)(acc >> 8)
+    tag[2] = (u8)(acc >> 16)
+    tag[3] = (u8)(acc >> 24)
+    acc = (acc >> 32) + h1 + (u64)le32(key, 20)
+    tag[4] = (u8)acc
+    tag[5] = (u8)(acc >> 8)
+    tag[6] = (u8)(acc >> 16)
+    tag[7] = (u8)(acc >> 24)
+    acc = (acc >> 32) + h2 + (u64)le32(key, 24)
+    tag[8] = (u8)acc
+    tag[9] = (u8)(acc >> 8)
+    tag[10] = (u8)(acc >> 16)
+    tag[11] = (u8)(acc >> 24)
+    acc = (acc >> 32) + h3 + (u64)le32(key, 28)
+    tag[12] = (u8)acc
+    tag[13] = (u8)(acc >> 8)
+    tag[14] = (u8)(acc >> 16)
+    tag[15] = (u8)(acc >> 24)

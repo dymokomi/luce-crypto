@@ -10,7 +10,7 @@ from check_argon import check_argon
 
 def check_all(binaries):
     binaries = Path(binaries).resolve()
-    for name in ("native", "facade", "keyed-native", "keyed-failures", "memory-probe", "argon-driver", "argon-failures"):
+    for name in ("native", "facade", "keyed-native", "keyed-failures", "memory-probe", "argon-driver", "argon-failures", "aead-tests"):
         result = checked([binaries / name])
         assert result.stdout.startswith(b"PASS "), result.stdout
         print(result.stdout.decode(), end="", flush=True)

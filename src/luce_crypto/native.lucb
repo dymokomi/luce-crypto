@@ -5,6 +5,8 @@ import luce_crypto.hkdf as kdf
 import luce_crypto.secret as secret
 import luce_crypto.secure as secure
 import luce_crypto.argon2id as password_kdf
+import luce_crypto.aead as aead
+import luce_crypto.sha1 as sha1
 
 pub type Hash = sha2.Hash
 pub type Hmac = mac.Hmac
@@ -48,6 +50,17 @@ pub func secret_from_bytes(input: const u8[]) -> Secret!:
 
 pub func random_secret(count: usize) -> Secret!:
     return try secret.random(count)
+
+pub let forged = aead.forged
+
+pub func aead_seal(key: const u8[], nonce: const u8[], aad: const u8[], plaintext: const u8[], ciphertext: u8[], tag: u8[]) -> !:
+    try aead.seal(key, nonce, aad, plaintext, ciphertext, tag)
+
+pub func aead_open(key: const u8[], nonce: const u8[], aad: const u8[], ciphertext: const u8[], tag: const u8[], plaintext: u8[]) -> !:
+    try aead.open(key, nonce, aad, ciphertext, tag, plaintext)
+
+pub func sha1_digest(input: const u8[], output: u8[]) -> usize!:
+    return try sha1.digest(input, output)
 
 pub func wipe(data: u8[]):
     secure.wipe(data)

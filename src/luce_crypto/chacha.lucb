@@ -1,0 +1,100 @@
+## RFC 8439 ChaCha20 and the HChaCha20 construction used by XChaCha20.
+import luce_crypto.secure as secure
+import luce_crypto.sha2 as sha2
+
+func rotl(x: u32, n: u32) -> u32:
+    return (x << n) | (x >> (32 - n))
+
+func load(bytes: const u8[], at: usize) -> u32:
+    return (u32)bytes[at] | ((u32)bytes[at + 1] << 8) | ((u32)bytes[at + 2] << 16) | ((u32)bytes[at + 3] << 24)
+
+func store(bytes: u8[], at: usize, value: u32):
+    bytes[at] = (u8)value
+    bytes[at + 1] = (u8)(value >> 8)
+    bytes[at + 2] = (u8)(value >> 16)
+    bytes[at + 3] = (u8)(value >> 24)
+
+func quarter(s: u32[], a: usize, b: usize, c: usize, d: usize):
+    s[a] +%= s[b]
+    s[d] ^= s[a]
+    s[d] = rotl(s[d], 16)
+    s[c] +%= s[d]
+    s[b] ^= s[c]
+    s[b] = rotl(s[b], 12)
+    s[a] +%= s[b]
+    s[d] ^= s[a]
+    s[d] = rotl(s[d], 8)
+    s[c] +%= s[d]
+    s[b] ^= s[c]
+    s[b] = rotl(s[b], 7)
+
+func rounds(s: u32[]):
+    for _ in 0..<(usize)10:
+        quarter(s, 0, 4, 8, 12)
+        quarter(s, 1, 5, 9, 13)
+        quarter(s, 2, 6, 10, 14)
+        quarter(s, 3, 7, 11, 15)
+        quarter(s, 0, 5, 10, 15)
+        quarter(s, 1, 6, 11, 12)
+        quarter(s, 2, 7, 8, 13)
+        quarter(s, 3, 4, 9, 14)
+
+func init_state(s: u32[], key: const u8[], counter: u32, nonce: const u8[]):
+    s[0] = 0x61707865
+    s[1] = 0x3320646e
+    s[2] = 0x79622d32
+    s[3] = 0x6b206574
+    for i in 0..<(usize)8: s[4 + i] = load(key, i * 4)
+    s[12] = counter
+    s[13] = load(nonce, 0)
+    s[14] = load(nonce, 4)
+    s[15] = load(nonce, 8)
+
+pub func block(key: const u8[], counter: u32, nonce: const u8[], output: u8[]) -> !:
+    if key.length != 32 or nonce.length != 12 or output.length < 64:
+        error(sha2.invalid, "ChaCha20 block requires a 32-byte key, 12-byte nonce and 64-byte output")
+    var s: u32[16]
+    var w: u32[16]
+    defer secure.wipe(u8[]((u8*)&s[0], sizeof(s)))
+    defer secure.wipe(u8[]((u8*)&w[0], sizeof(w)))
+    init_state(s, key, counter, nonce)
+    for i in 0..<(usize)16: w[i] = s[i]
+    rounds(w)
+    for i in 0..<(usize)16: store(output, i * 4, w[i] +% s[i])
+
+pub func hchacha20(key: const u8[], nonce: const u8[], output: u8[]) -> !:
+    if key.length != 32 or nonce.length != 16 or output.length < 32:
+        error(sha2.invalid, "HChaCha20 requires a 32-byte key, 16-byte nonce and 32-byte output")
+    var s: u32[16]
+    defer secure.wipe(u8[]((u8*)&s[0], sizeof(s)))
+    s[0] = 0x61707865
+    s[1] = 0x3320646e
+    s[2] = 0x79622d32
+    s[3] = 0x6b206574
+    for i in 0..<(usize)8: s[4 + i] = load(key, i * 4)
+    for i in 0..<(usize)4: s[12 + i] = load(nonce, i * 4)
+    rounds(s)
+    store(output, 0, s[0])
+    store(output, 4, s[1])
+    store(output, 8, s[2])
+    store(output, 12, s[3])
+    store(output, 16, s[12])
+    store(output, 20, s[13])
+    store(output, 24, s[14])
+    store(output, 28, s[15])
+
+pub func xor(key: const u8[], nonce: const u8[], counter: u32, input: const u8[], output: u8[]) -> !:
+    if key.length != 32 or nonce.length != 12: error(sha2.invalid, "ChaCha20 requires a 32-byte key and 12-byte nonce")
+    if output.length < input.length: error(sha2.invalid, "ChaCha20 output is shorter than input")
+    if input.length > 16777216: error(sha2.length_exceeded, "ChaCha20 input exceeds 16 MiB")
+    var stream: u8[64]
+    defer secure.wipe(stream)
+    var at: usize
+    var n = counter
+    while at < input.length:
+        if n == 0 and at != 0: error(sha2.length_exceeded, "ChaCha20 counter wrapped")
+        try block(key, n, nonce, stream)
+        n +%= 1
+        let take = 64 if input.length - at > 64 else input.length - at
+        for i in 0..<take: output[at + i] = input[at + i] ^ stream[i]
+        at += take

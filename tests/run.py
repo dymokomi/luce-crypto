@@ -17,7 +17,8 @@ SOURCES += [("src/luce_crypto/keyed_tests.lucb", "keyed-native"),
             ("src/luce_crypto/memory_probe.lucb", "memory-probe")]
 SOURCES += [("src/luce_crypto/blake2b_tests.lucb", "blake-driver"),
             ("src/luce_crypto/argon2_tests.lucb", "argon-driver"),
-            ("src/luce_crypto/argon2_failure_tests.lucb", "argon-failures")]
+            ("src/luce_crypto/argon2_failure_tests.lucb", "argon-failures"),
+            ("src/luce_crypto/aead_tests.lucb", "aead-tests")]
 
 
 def main():

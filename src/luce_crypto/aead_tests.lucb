@@ -1,0 +1,103 @@
+import luce_crypto.chacha as chacha
+import luce_crypto.poly1305 as poly
+import luce_crypto.aead as aead
+import luce_crypto.sha1 as sha1
+
+func nibble(c: u8) -> u8:
+    if c >= '0' and c <= '9': return c - '0'
+    if c >= 'a' and c <= 'f': return c - 'a' + 10
+    return c - 'A' + 10
+
+func decode_hex(text: str, out: u8[]) -> usize:
+    var n: usize
+    var i: usize
+    while i < text.length:
+        if text.bytes[i] == ' ' or text.bytes[i] == '\n':
+            i += 1
+            continue
+        out[n] = (nibble(text.bytes[i]) << 4) | nibble(text.bytes[i + 1])
+        n += 1
+        i += 2
+    return n
+
+func equal(a: const u8[], b: const u8[]):
+    assert(a.length == b.length)
+    for i in 0..<a.length: assert(a[i] == b[i], "mismatch")
+
+pub func main(arguments: str[]) -> i32!:
+    discard(arguments)
+    var key: u8[32]
+    var nonce: u8[12]
+    var block: u8[64]
+    for i in 0..<(usize)32: key[i] = (u8)i
+    nonce[3] = 9
+    nonce[7] = 0x4a
+    try chacha.block(key, 1, nonce, block)
+    var expect: u8[64]
+    let n = decode_hex("10f1e7e4d13b5915500fdd1fa32071c4c7d1f4c733c068030422aa9ac3d46c4ed2826446079faa0914c2d705d98b02a2b5129cd1de164eb9cbd083e8a2503c4e", expect)
+    assert(n == 64)
+    for i in 0..<(usize)64:
+        if block[i] != expect[i]:
+            print(f"mismatch at {i} got {block[i]} want {expect[i]}")
+            trap("block")
+    var poly_key: u8[32]
+    var poly_msg: u8[34]
+    var tag: u8[16]
+    let kn = decode_hex("85d6be7857556d337f4452fe42d506a80103808afb0db2fd4abff6af4149f51b", poly_key)
+    assert(kn == 32)
+    let msg = b"Cryptographic Forum Research Group"
+    try poly.authenticate(poly_key, msg, tag)
+    var poly_tag: u8[16]
+    decode_hex("a8061dc1305136c6c22b8baf0c0127a9", poly_tag)
+    for i in 0..<(usize)16:
+        if tag[i] != poly_tag[i]:
+            print(f"poly mismatch at {i} got {tag[i]} want {poly_tag[i]}")
+            trap("poly")
+    var aead_key: u8[32]
+    var aead_nonce: u8[12]
+    var aad: u8[12]
+    decode_hex("808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f", aead_key)
+    decode_hex("070000004041424344454647", aead_nonce)
+    decode_hex("50515253c0c1c2c3c4c5c6c7", aad)
+    let plain = b"Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it."
+    var cipher: u8[114]
+    var aead_tag: u8[16]
+    try aead.seal(aead_key, aead_nonce, aad, plain, cipher, aead_tag)
+    var expect_ct: u8[114]
+    assert(plain.length == 114)
+    decode_hex("d31a8d34648e60db7b86afbc53ef7ec2a4aded51296e08fea9e2b5a736ee62d63dbea45e8ca9671282fafb69da92728b1a71de0a9e060b2905d6a5b67ecd3b3692ddbd7f2d778b8c9803aee328091b58fab324e4fad675945585808b4831d7bc3ff4def08e4b7a9de576d26586cec64b6116", expect_ct)
+    var expect_tag: u8[16]
+    decode_hex("1ae10b594f09e26a7e902ecbd0600691", expect_tag)
+    equal(cipher[..<plain.length], expect_ct)
+    equal(aead_tag, expect_tag)
+    var opened: u8[114]
+    try aead.open(aead_key, aead_nonce, aad, cipher[..<plain.length], aead_tag, opened)
+    equal(opened[..<plain.length], plain)
+    var bad = aead_tag
+    bad[0] ^= 1
+    var forged = false
+    aead.open(aead_key, aead_nonce, aad, cipher[..<plain.length], bad, opened) catch failure:
+        assert(failure.code == aead.forged)
+        forged = true
+        recover ()
+    assert(forged)
+    var xkey: u8[32]
+    var xnonce: u8[24]
+    for i in 0..<(usize)32: xkey[i] = (u8)i
+    for i in 0..<(usize)24: xnonce[i] = (u8)i
+    var xct: u8[5]
+    var xtag: u8[16]
+    var xpt: u8[5]
+    try aead.seal(xkey, xnonce, b"ad", b"hello", xct, xtag)
+    try aead.open(xkey, xnonce, b"ad", xct, xtag, xpt)
+    equal(xpt, b"hello")
+    var sha_out: u8[20]
+    try sha1.digest(b"abc", sha_out)
+    var sha_expect: u8[20]
+    decode_hex("a9993e364706816aba3e25717850c26c9cd0d89d", sha_expect)
+    equal(sha_out, sha_expect)
+    try sha1.digest(b"", sha_out)
+    decode_hex("da39a3ee5e6b4b0d3255bfef95601890afd80709", sha_expect)
+    equal(sha_out, sha_expect)
+    print("PASS RFC 8439 ChaCha20/Poly1305 AEAD, XChaCha round-trip and SHA-1")
+    return 0
