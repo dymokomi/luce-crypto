@@ -9,8 +9,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def openssl_has_mldsa65():
+    listed = subprocess.check_output(["openssl", "list", "-public-key-algorithms"], text=True)
+    return "ML-DSA-65" in listed
+
+
 def main():
     binary = Path(sys.argv[1] if len(sys.argv) > 1 else ROOT / "build/native3/mldsa-interop")
+    if not openssl_has_mldsa65():
+        print("SKIP OpenSSL ML-DSA-65 interop (algorithm not in this OpenSSL)", flush=True)
+        return
     seed = bytes(32)
     pem = subprocess.check_output(
         ["openssl", "genpkey", "-algorithm", "ML-DSA-65", "-pkeyopt", f"hexseed:{seed.hex()}"]
