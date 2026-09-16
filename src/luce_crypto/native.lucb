@@ -7,6 +7,8 @@ import luce_crypto.secure as secure
 import luce_crypto.argon2id as password_kdf
 import luce_crypto.aead as aead
 import luce_crypto.sha1 as sha1
+import luce_crypto.shake as shake
+import luce_crypto.mldsa as mldsa
 
 pub type Hash = sha2.Hash
 pub type Hmac = mac.Hmac
@@ -61,6 +63,21 @@ pub func aead_open(key: const u8[], nonce: const u8[], aad: const u8[], cipherte
 
 pub func sha1_digest(input: const u8[], output: u8[]) -> usize!:
     return try sha1.digest(input, output)
+
+pub func shake256(input: const u8[], output: u8[]) -> !:
+    try shake.shake256(input, output)
+
+pub func shake128(input: const u8[], output: u8[]) -> !:
+    try shake.shake128(input, output)
+
+pub func mldsa_keygen(seed: const u8[], pk: u8[], sk: u8[]) -> !:
+    try mldsa.keygen(seed, pk, sk)
+
+pub func mldsa_sign(sk: const u8[], msg: const u8[], rnd: const u8[], sig: u8[]) -> !:
+    try mldsa.sign(sk, msg, rnd, sig)
+
+pub func mldsa_verify(pk: const u8[], msg: const u8[], sig: const u8[]) -> bool!:
+    return try mldsa.verify(pk, msg, sig)
 
 pub func wipe(data: u8[]):
     secure.wipe(data)

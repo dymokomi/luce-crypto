@@ -1,0 +1,18 @@
+import files
+import c
+import luce_crypto.mldsa as mldsa
+
+pub func main(arguments: str[]) -> i32!:
+    assert(arguments.length == 4)
+    var pk_file = try files.File.open((c.str)arguments[1])
+    defer pk_file.destroy()
+    var sig_file = try files.File.open((c.str)arguments[2])
+    defer sig_file.destroy()
+    var pk: u8[1952]
+    var sig: u8[3309]
+    assert(try pk_file.read(pk) == 1952)
+    assert(try sig_file.read(sig) == 3309)
+    let msg = arguments[3].bytes
+    assert(try mldsa.verify(pk, msg, sig), "OpenSSL signature rejected")
+    print("PASS OpenSSL ML-DSA-65 signature verifies")
+    return 0

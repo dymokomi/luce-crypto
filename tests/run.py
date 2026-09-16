@@ -18,7 +18,10 @@ SOURCES += [("src/luce_crypto/keyed_tests.lucb", "keyed-native"),
 SOURCES += [("src/luce_crypto/blake2b_tests.lucb", "blake-driver"),
             ("src/luce_crypto/argon2_tests.lucb", "argon-driver"),
             ("src/luce_crypto/argon2_failure_tests.lucb", "argon-failures"),
-            ("src/luce_crypto/aead_tests.lucb", "aead-tests")]
+            ("src/luce_crypto/aead_tests.lucb", "aead-tests"),
+            ("src/luce_crypto/shake_tests.lucb", "shake-tests"),
+            ("src/luce_crypto/mldsa_tests.lucb", "mldsa-tests"),
+            ("src/luce_crypto/mldsa_interop.lucb", "mldsa-interop")]
 
 
 def main():
@@ -42,6 +45,8 @@ def main():
             run([args.base.resolve(), "build", ROOT / source, *flags, "-o", output / name])
         run([args.luce.resolve(), "build", ROOT / "tests/facade.luc", *flags, "-o", output / "facade"])
         check_all(output)
+        subprocess.run([sys.executable, "tests/check_mldsa.py", output / "mldsa-interop"],
+                       cwd=ROOT, env=environment, check=True, timeout=180)
         print(f"PASS mode {mode}", flush=True)
 
 

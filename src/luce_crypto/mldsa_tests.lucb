@@ -1,0 +1,40 @@
+import luce_crypto.mldsa as mldsa
+import luce_crypto.sha2 as sha2
+
+func nibble(c: u8) -> u8:
+    if c >= '0' and c <= '9': return c - '0'
+    if c >= 'a' and c <= 'f': return c - 'a' + 10
+    return c - 'A' + 10
+
+func decode_hex(text: str, out: u8[]) -> usize:
+    var n: usize
+    var i: usize
+    while i < text.length:
+        out[n] = (nibble(text.bytes[i]) << 4) | nibble(text.bytes[i + 1])
+        n += 1
+        i += 2
+    return n
+
+pub func main(arguments: str[]) -> i32!:
+    discard(arguments)
+    var seed: u8[32]
+    var pk: u8[1952]
+    var sk: u8[4032]
+    try mldsa.keygen(seed, pk, sk)
+    var expect: u8[32]
+    assert(decode_hex("424b2f267e58d5b3b44d71acfc6a656bb26950d57c61db1c880bcfa1feab443f", expect) == 32)
+    for i in 0..<(usize)32: assert(pk[i] == expect[i], "ML-DSA-65 rho/t1 prefix")
+    var digest: u8[32]
+    try sha2.digest(pk, digest, "sha256")
+    var want: u8[32]
+    assert(decode_hex("085ba380ff386dd52e42349c6eb88489d6058ea541a4e3fb0dce9a3fd1f7a911", want) == 32)
+    for i in 0..<(usize)32: assert(digest[i] == want[i], "ML-DSA-65 OpenSSL public-key digest")
+    var rnd: u8[32]
+    var sig: u8[3309]
+    try mldsa.sign(sk, b"hello", rnd, sig)
+    assert(try mldsa.verify(pk, b"hello", sig))
+    assert(not try mldsa.verify(pk, b"hellp", sig))
+    sig[0] ^= 1
+    assert(not try mldsa.verify(pk, b"hello", sig))
+    print("PASS ML-DSA-65 keygen vs OpenSSL seed=0 and sign/verify")
+    return 0

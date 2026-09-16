@@ -1,0 +1,49 @@
+import luce_crypto.shake as shake
+
+func nibble(c: u8) -> u8:
+    if c >= '0' and c <= '9': return c - '0'
+    if c >= 'a' and c <= 'f': return c - 'a' + 10
+    return c - 'A' + 10
+
+func decode_hex(text: str, out: u8[]) -> usize:
+    var n: usize
+    var i: usize
+    while i < text.length:
+        if text.bytes[i] == ' ' or text.bytes[i] == '\n':
+            i += 1
+            continue
+        out[n] = (nibble(text.bytes[i]) << 4) | nibble(text.bytes[i + 1])
+        n += 1
+        i += 2
+    return n
+
+func equal(a: const u8[], b: const u8[]):
+    assert(a.length == b.length)
+    for i in 0..<a.length: assert(a[i] == b[i], "SHAKE mismatch")
+
+pub func main(arguments: str[]) -> i32!:
+    discard(arguments)
+    var out: u8[64]
+    var expect: u8[64]
+    try shake.shake128(b"", out[..<32])
+    assert(decode_hex("7f9c2ba4e88f827d616045507605853ed73b8093f6efbc88eb1a6eacfa66ef26", expect) == 32)
+    equal(out[..<32], expect[..<32])
+    try shake.shake128(b"abc", out[..<32])
+    assert(decode_hex("5881092dd818bf5cf8a3ddb793fbcba74097d5c526a6d35f97b83351940f2cc8", expect) == 32)
+    equal(out[..<32], expect[..<32])
+    try shake.shake256(b"The quick brown fox jumps over the lazy dog", out[..<32])
+    assert(decode_hex("2f671343d9b2e1604dc9dcf0753e5fe15c7c64a0d283cbbf722d411a0e36f6ca", expect) == 32)
+    equal(out[..<32], expect[..<32])
+    try shake.shake256(b"", out)
+    assert(decode_hex("46b9dd2b0ba88d13233b3feb743eeb243fcd52ea62b81b82b50c27646ed5762fd75dc4ddd8c0f200cb05019d67b592f6fc821c49479ab48640292eacb3b7c4be", expect) == 64)
+    equal(out, expect)
+    var state = try shake.make(256)
+    defer state.close()
+    try state.update(b"ab")
+    try state.update(b"c")
+    var split: u8[64]
+    try state.squeeze(split)
+    try shake.shake256(b"abc", out)
+    equal(split, out)
+    print("PASS FIPS 202 SHAKE128/SHAKE256")
+    return 0

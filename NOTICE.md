@@ -49,3 +49,10 @@ generator also checks the RFC 9106 result before writing any fixture. Dependenci
 are installed only in an ignored build environment; none are runtime dependencies
 or shipped in the prebuilt VPS test bundle. Python hashlib separately checks
 BLAKE2b and H'. Numeric test facts are not claimed as original cryptographic design.
+
+SHAKE128/SHAKE256 follow FIPS 202; ML-DSA-65 follows FIPS 204. Independent
+known-answer checks use Python hashlib for SHAKE and OpenSSL 3.6 ML-DSA-65
+(`hexseed` key generation and `pkeyutl` signatures) as test-only oracles.
+No OpenSSL, liboqs or pqcrystals object is linked into production builds.
+NTT zeta constants match the public Dilithium reference table for q=8380417;
+they are field elements specified by FIPS 204, not copied engine source.
