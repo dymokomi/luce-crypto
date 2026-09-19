@@ -89,8 +89,8 @@ pub func x25519_base(out: u8[], scalar: const u8[]) -> !:
     try curve.scalarmult_base(out, scalar)
 
 ## Verify an ECDSA P-256 signature; each argument is 32 big-endian bytes.
-pub func ecdsa_p256_verify(qx: const u8[], qy: const u8[], digest: const u8[], r: const u8[], s: const u8[]) -> bool!:
-    return try p256.verify(qx, qy, digest, r, s)
+pub func ecdsa_p256_verify(qx: const u8[], qy: const u8[], message: const u8[], r: const u8[], s: const u8[]) -> bool!:
+    return try p256.verify(qx, qy, message, r, s)
 
 pub func wipe(data: u8[]):
     secure.wipe(data)
