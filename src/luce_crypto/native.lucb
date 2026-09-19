@@ -9,6 +9,7 @@ import luce_crypto.aead as aead
 import luce_crypto.sha1 as sha1
 import luce_crypto.shake as shake
 import luce_crypto.mldsa as mldsa
+import luce_crypto.x25519 as curve
 
 pub type Hash = sha2.Hash
 pub type Hmac = mac.Hmac
@@ -78,6 +79,13 @@ pub func mldsa_sign(sk: const u8[], msg: const u8[], rnd: const u8[], sig: u8[])
 
 pub func mldsa_verify(pk: const u8[], msg: const u8[], sig: const u8[]) -> bool!:
     return try mldsa.verify(pk, msg, sig)
+
+## X25519 (RFC 7748): `out` = `scalar` * `point`, and against the base point.
+pub func x25519(out: u8[], scalar: const u8[], point: const u8[]) -> !:
+    try curve.scalarmult(out, scalar, point)
+
+pub func x25519_base(out: u8[], scalar: const u8[]) -> !:
+    try curve.scalarmult_base(out, scalar)
 
 pub func wipe(data: u8[]):
     secure.wipe(data)
