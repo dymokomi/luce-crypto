@@ -20,6 +20,8 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     os.environ["ASAN_OPTIONS"] = "halt_on_error=1:abort_on_error=1"
     os.environ["UBSAN_OPTIONS"] = "halt_on_error=1:print_stacktrace=1"
+    os.environ.setdefault("LUCE_STD", str(ROOT.parent / "luce-base/src/std"))
+    os.environ.setdefault("LUCE_CACHE", str(ROOT / "build/cache"))
     def run(command):
         subprocess.run([str(arg) for arg in command], cwd=ROOT, check=True, timeout=180)
     for source, name in SOURCES:
@@ -28,7 +30,7 @@ def main():
         run([os.environ.get("CC", "cc"), "-std=gnu11", "-O1", "-g", "-w", "-fno-strict-aliasing",
              "-fsanitize=address,undefined", "-fno-omit-frame-pointer", "-I", runtime,
              generated, runtime / "lucb_rt.c", "-pthread", "-lm", "-o", output / name])
-    for name in ("native", "keyed-native", "keyed-failures", "memory-probe", "argon-driver", "argon-failures", "aead-tests", "shake-tests", "mldsa-tests"):
+    for name in ("x25519", "p256", "native", "keyed-native", "keyed-failures", "memory-probe", "argon-driver", "argon-failures", "aead-tests", "shake-tests", "mldsa-tests"):
         print(checked([output / name]).stdout.decode(), end="", flush=True)
     check(output / "driver")
     check_files(output / "file-driver")

@@ -75,6 +75,12 @@ python3 tools/codegen_probe.py
 ```
 
 Or supply `--base /path/to/luce-base --luce /path/to/luce` to `tests/run.py`.
+The runner builds and executes dedicated X25519 and P-256 vector programs in
+all six modes; these programs are also included in sanitizer and prebuilt-bundle
+checks. They cover RFC 7748 scalar multiplication/Diffie–Hellman, RFC 6979
+verification/public-key derivation, and P-256 signing/tampering. They are not a
+side-channel audit. Compiler caches default to `build/cache` (`LUCE_CACHE` can
+override this).
 See [validation](docs/VALIDATION.md) for measured scope and exclusions, and
 [provenance](NOTICE.md) for standards and unchanged NIST fixtures.
 The committed Argon2id fixture can additionally be regenerated/verified against

@@ -10,7 +10,7 @@ from run_prebuilt import check_all
 ROOT = Path(__file__).resolve().parents[1]
 MODES = {f"native{i}": ["--native", "--opt", str(i)] for i in range(4)}
 MODES.update({"c": ["--backend=c"], "c-release": ["--backend=c", "--release"]})
-SOURCES = [("src/luce_crypto/x25519.lucb", "x25519"), ("src/luce_crypto/p256.lucb", "p256"), ("src/luce_crypto/native_tests.lucb", "native"), ("tests/driver.lucb", "driver"), ("tests/file_driver.lucb", "file-driver")]
+SOURCES = [("src/luce_crypto/x25519_tests.lucb", "x25519"), ("src/luce_crypto/p256_tests.lucb", "p256"), ("src/luce_crypto/native_tests.lucb", "native"), ("tests/driver.lucb", "driver"), ("tests/file_driver.lucb", "file-driver")]
 SOURCES += [("src/luce_crypto/keyed_tests.lucb", "keyed-native"),
             ("src/luce_crypto/keyed_failure_tests.lucb", "keyed-failures"),
             ("tests/keyed_driver.lucb", "keyed-driver"),
@@ -31,8 +31,12 @@ def main():
     parser.add_argument("--luce", type=Path, default=ROOT / "build/toolchain/luce")
     args = parser.parse_args()
     environment = dict(os.environ, LUCE_BASE=str(args.base.resolve()))
+    environment.setdefault("LUCE_STD", str(ROOT.parent / "luce-base/src/std"))
+    environment.setdefault("LUCE_CACHE", str(ROOT / "build/cache"))
     def run(command):
-        subprocess.run([str(arg) for arg in command], cwd=ROOT, env=environment, check=True, timeout=180)
+        print("RUN", " ".join(str(arg) for arg in command), flush=True)
+        timeout = 600 if len(command) > 1 and command[1] == "build" else 180
+        subprocess.run([str(arg) for arg in command], cwd=ROOT, env=environment, check=True, timeout=timeout)
     run([sys.executable, "tests/test_vectors.py"])
     run([sys.executable, "tests/test_keyed.py"])
     run([sys.executable, "tests/test_argon.py"])

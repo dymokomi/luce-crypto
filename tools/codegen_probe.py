@@ -10,8 +10,9 @@ import re
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
-SYMBOLS = ("lb_luce_crypto_secure_wipe", "lb_luce_crypto_secure_equal",
-           "lb_luce_crypto_secure_select_byte", "probe_dead")
+# Exact names emitted by the pinned Base 0.20 compiler's collision-safe mangler.
+SYMBOLS = ("lb_18luce_crypto_secure_wipe", "lb_18luce_crypto_secure_equal",
+           "lb_18luce_crypto_secure_11select_byte", "probe_dead")
 
 
 def body(text, symbol):
@@ -28,6 +29,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", type=Path, default=ROOT / "build/toolchain/luce-base")
     args = parser.parse_args()
+    os.environ.setdefault("LUCE_STD", str(ROOT.parent / "luce-base/src/std"))
+    os.environ.setdefault("LUCE_CACHE", str(ROOT / "build/cache"))
     output = ROOT / "build/codegen"
     output.mkdir(parents=True, exist_ok=True)
     def run(command):
