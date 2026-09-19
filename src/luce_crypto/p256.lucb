@@ -1,0 +1,407 @@
+## NIST P-256 (secp256r1) ECDSA signature verification — the only signature
+## algorithm in the certificate chains this client validates. A field element is
+## eight little-endian 32-bit limbs; modular arithmetic is Montgomery form with SOS
+## reduction, so the prime field (mod p) and the scalar field (mod n) share one
+## path. Verification touches only public values, so plain double-and-add and
+## data-dependent branches are acceptable here. Base traps on unsigned overflow, so
+## every carry and borrow is explicit.
+import luce_crypto.sha2 as sha2
+
+let p_mod: u32[8] = [0xffffffff, 0xffffffff, 0xffffffff, 0x00000000, 0x00000000, 0x00000000, 0x00000001, 0xffffffff]
+let n_mod: u32[8] = [0xfc632551, 0xf3b9cac2, 0xa7179e84, 0xbce6faad, 0xffffffff, 0xffffffff, 0x00000000, 0xffffffff]
+let b_coef: u32[8] = [0x27d2604b, 0x3bce3c3e, 0xcc53b0f6, 0x651d06b0, 0x769886bc, 0xb3ebbd55, 0xaa3a93e7, 0x5ac635d8]
+let g_x: u32[8] = [0xd898c296, 0xf4a13945, 0x2deb33a0, 0x77037d81, 0x63a440f2, 0xf8bce6e5, 0xe12c4247, 0x6b17d1f2]
+let g_y: u32[8] = [0x37bf51f5, 0xcbb64068, 0x6b315ece, 0x2bce3357, 0x7c0f9e16, 0x8ee7eb4a, 0xfe1a7f9b, 0x4fe342e2]
+let r2_p: u32[8] = [0x00000003, 0x00000000, 0xffffffff, 0xfffffffb, 0xfffffffe, 0xffffffff, 0xfffffffd, 0x00000004]
+let r2_n: u32[8] = [0xbe79eea2, 0x83244c95, 0x49bd6fa6, 0x4699799c, 0x2b6bec59, 0x2845b239, 0xf3d95620, 0x66e12d94]
+let one_p: u32[8] = [0x00000001, 0x00000000, 0x00000000, 0xffffffff, 0xffffffff, 0xffffffff, 0xfffffffe, 0x00000000]
+let one_n: u32[8] = [0x039cdaaf, 0x0c46353d, 0x58e8617b, 0x43190552, 0x00000000, 0x00000000, 0xffffffff, 0x00000000]
+let n0_p: u32 = 0x00000001
+let n0_n: u32 = 0xee00bc4f
+
+struct Point:
+    var x: u32[8]
+    var y: u32[8]
+    var z: u32[8]
+
+func bn_copy(dst: u32[], src: const u32[]):
+    for i in 0..<8:
+        dst[i] = src[i]
+
+func bn_set_zero(a: u32[]):
+    for i in 0..<8:
+        a[i] = 0
+
+func bn_is_zero(a: const u32[]) -> bool:
+    var acc: u32 = 0
+    for i in 0..<8:
+        acc |= a[i]
+    return acc == 0
+
+## -1, 0 or 1 for a < b, a == b, a > b.
+func bn_cmp(a: const u32[], b: const u32[]) -> i32:
+    var i = 7
+    while i >= 0:
+        if a[(usize)i] != b[(usize)i]:
+            return 1 if a[(usize)i] > b[(usize)i] else -1
+        i -= 1
+    return 0
+
+func bn_add(out: u32[], a: const u32[], b: const u32[]) -> u32:
+    var carry: u64 = 0
+    for i in 0..<8:
+        let s = (u64)a[i] + (u64)b[i] + carry
+        out[i] = (u32)s
+        carry = s >> 32
+    return (u32)carry
+
+## `out` = a - b, returning the borrow. Kept underflow-free for Base's trapping
+## unsigned subtraction by adding 2^32 before subtracting whenever a limb is small.
+func bn_sub(out: u32[], a: const u32[], b: const u32[]) -> u32:
+    var borrow: u64 = 0
+    for i in 0..<8:
+        let ai = (u64)a[i]
+        let bi = (u64)b[i] + borrow
+        if ai >= bi:
+            out[i] = (u32)(ai - bi)
+            borrow = 0
+        else:
+            out[i] = (u32)(ai + 0x100000000 - bi)
+            borrow = 1
+    return (u32)borrow
+
+func mod_add(out: u32[], a: const u32[], b: const u32[], m: const u32[]):
+    let carry = bn_add(out, a, b)
+    if carry != 0 or bn_cmp(out, m) >= 0:
+        discard(bn_sub(out, out, m))
+
+func mod_sub(out: u32[], a: const u32[], b: const u32[], m: const u32[]):
+    let borrow = bn_sub(out, a, b)
+    if borrow != 0:
+        discard(bn_add(out, out, m))
+
+## Full 8x8 -> 16 limb product.
+func mul256(out: u32[], a: const u32[], b: const u32[]):
+    for i in 0..<16:
+        out[i] = 0
+    for i in 0..<8:
+        var carry: u64 = 0
+        for j in 0..<8:
+            let x = (u64)a[i] * (u64)b[j] + (u64)out[i + j] + carry
+            out[i + j] = (u32)x
+            carry = x >> 32
+        out[i + 8] = (u32)carry
+
+## SOS Montgomery reduction of a 16-limb product modulo `m` with `n0` = -m^-1 mod 2^32.
+func mont_reduce(out: u32[], product: const u32[], m: const u32[], n0: u32):
+    var t: u32[17]
+    for i in 0..<16:
+        t[i] = product[i]
+    t[16] = 0
+    for i in 0..<8:
+        let u = (u32)((u64)t[i] * (u64)n0)
+        var carry: u64 = 0
+        for j in 0..<8:
+            let x = (u64)u * (u64)m[j] + (u64)t[i + j] + carry
+            t[i + j] = (u32)x
+            carry = x >> 32
+        var k = i + 8
+        while carry != 0 and k < 17:
+            let x = (u64)t[k] + carry
+            t[k] = (u32)x
+            carry = x >> 32
+            k += 1
+    var res: u32[8]
+    for i in 0..<8:
+        res[i] = t[8 + i]
+    if t[16] != 0 or bn_cmp(res, m) >= 0:
+        discard(bn_sub(res, res, m))
+    bn_copy(out, res)
+
+func mont_mul(out: u32[], a: const u32[], b: const u32[], m: const u32[], n0: u32):
+    var product: u32[16]
+    mul256(product, a, b)
+    mont_reduce(out, product, m, n0)
+
+func to_mont(out: u32[], a: const u32[], r2: const u32[], m: const u32[], n0: u32):
+    mont_mul(out, a, r2, m, n0)
+
+func from_mont(out: u32[], a: const u32[], m: const u32[], n0: u32):
+    var t: u32[16]
+    for i in 0..<8:
+        t[i] = a[i]
+        t[i + 8] = 0
+    mont_reduce(out, t, m, n0)
+
+## Plain modular product a*b mod m (inputs and output in ordinary form).
+func mul_mod(out: u32[], a: const u32[], b: const u32[], m: const u32[], n0: u32, r2: const u32[]):
+    var t: u32[8]
+    mont_mul(t, a, b, m, n0)
+    mont_mul(out, t, r2, m, n0)
+
+func bit_at(a: const u32[], index: i64) -> u32:
+    return (a[(usize)(index >> 5)] >> (u32)(index & 31)) & 1
+
+## Modular inverse a^(m-2) mod m by Fermat, using Montgomery exponentiation.
+func mod_inverse(out: u32[], a: const u32[], m: const u32[], n0: u32, r2: const u32[], one: const u32[]):
+    var base: u32[8]
+    to_mont(base, a, r2, m, n0)
+    var result: u32[8]
+    bn_copy(result, one)
+    var exponent: u32[8]
+    bn_copy(exponent, m)
+    exponent[0] = m[0] - 2
+    var i = 255
+    while i >= 0:
+        mont_mul(result, result, result, m, n0)
+        if bit_at(exponent, i) == 1:
+            mont_mul(result, result, base, m, n0)
+        i -= 1
+    from_mont(out, result, m, n0)
+
+func point_copy(dst: Point*, src: const Point*):
+    bn_copy(dst.x, src.x)
+    bn_copy(dst.y, src.y)
+    bn_copy(dst.z, src.z)
+
+func set_infinity(o: Point*):
+    bn_copy(o.x, one_p)
+    bn_copy(o.y, one_p)
+    bn_set_zero(o.z)
+
+func is_infinity(o: const Point*) -> bool:
+    return bn_is_zero(o.z)
+
+## Jacobian doubling for a = -3 (EFD dbl-2001-b). Outputs into locals then copies,
+## so `o` may alias `pnt`.
+func jac_double(o: Point*, pnt: const Point*):
+    if bn_is_zero(pnt.z):
+        set_infinity(o)
+        return
+    var delta: u32[8]
+    var gamma: u32[8]
+    var beta: u32[8]
+    var alpha: u32[8]
+    var t1: u32[8]
+    var t2: u32[8]
+    mont_mul(delta, pnt.z, pnt.z, p_mod, n0_p)
+    mont_mul(gamma, pnt.y, pnt.y, p_mod, n0_p)
+    mont_mul(beta, pnt.x, gamma, p_mod, n0_p)
+    mod_sub(t1, pnt.x, delta, p_mod)
+    mod_add(t2, pnt.x, delta, p_mod)
+    mont_mul(alpha, t1, t2, p_mod, n0_p)
+    mod_add(t1, alpha, alpha, p_mod)
+    mod_add(alpha, t1, alpha, p_mod)
+    # Z3 = (Y+Z)^2 - gamma - delta
+    var z3: u32[8]
+    mod_add(t1, pnt.y, pnt.z, p_mod)
+    mont_mul(t1, t1, t1, p_mod, n0_p)
+    mod_sub(t1, t1, gamma, p_mod)
+    mod_sub(z3, t1, delta, p_mod)
+    # X3 = alpha^2 - 8*beta
+    var x3: u32[8]
+    mont_mul(x3, alpha, alpha, p_mod, n0_p)
+    mod_add(t1, beta, beta, p_mod)
+    mod_add(t1, t1, t1, p_mod)
+    mod_add(t1, t1, t1, p_mod)
+    mod_sub(x3, x3, t1, p_mod)
+    # Y3 = alpha*(4*beta - X3) - 8*gamma^2
+    var y3: u32[8]
+    mod_add(t2, beta, beta, p_mod)
+    mod_add(t2, t2, t2, p_mod)
+    mod_sub(t2, t2, x3, p_mod)
+    mont_mul(y3, alpha, t2, p_mod, n0_p)
+    mont_mul(t1, gamma, gamma, p_mod, n0_p)
+    mod_add(t1, t1, t1, p_mod)
+    mod_add(t1, t1, t1, p_mod)
+    mod_add(t1, t1, t1, p_mod)
+    mod_sub(y3, y3, t1, p_mod)
+    bn_copy(o.x, x3)
+    bn_copy(o.y, y3)
+    bn_copy(o.z, z3)
+
+## Jacobian addition (EFD add-2007-bl), handling infinities and equal points.
+func jac_add(o: Point*, p1: const Point*, p2: const Point*):
+    if bn_is_zero(p1.z):
+        point_copy(o, p2)
+        return
+    if bn_is_zero(p2.z):
+        point_copy(o, p1)
+        return
+    var z1z1: u32[8]
+    var z2z2: u32[8]
+    var u1: u32[8]
+    var u2: u32[8]
+    var s1: u32[8]
+    var s2: u32[8]
+    var h: u32[8]
+    var t1: u32[8]
+    mont_mul(z1z1, p1.z, p1.z, p_mod, n0_p)
+    mont_mul(z2z2, p2.z, p2.z, p_mod, n0_p)
+    mont_mul(u1, p1.x, z2z2, p_mod, n0_p)
+    mont_mul(u2, p2.x, z1z1, p_mod, n0_p)
+    mont_mul(t1, p2.z, z2z2, p_mod, n0_p)
+    mont_mul(s1, p1.y, t1, p_mod, n0_p)
+    mont_mul(t1, p1.z, z1z1, p_mod, n0_p)
+    mont_mul(s2, p2.y, t1, p_mod, n0_p)
+    mod_sub(h, u2, u1, p_mod)
+    var rr: u32[8]
+    mod_sub(rr, s2, s1, p_mod)
+    if bn_is_zero(h):
+        if bn_is_zero(rr):
+            jac_double(o, p1)
+        else:
+            set_infinity(o)
+        return
+    var i_val: u32[8]
+    var j_val: u32[8]
+    var v_val: u32[8]
+    mod_add(i_val, h, h, p_mod)
+    mont_mul(i_val, i_val, i_val, p_mod, n0_p)
+    mont_mul(j_val, h, i_val, p_mod, n0_p)
+    mod_add(rr, rr, rr, p_mod)
+    mont_mul(v_val, u1, i_val, p_mod, n0_p)
+    # X3 = rr^2 - J - 2V
+    var x3: u32[8]
+    mont_mul(x3, rr, rr, p_mod, n0_p)
+    mod_sub(x3, x3, j_val, p_mod)
+    mod_add(t1, v_val, v_val, p_mod)
+    mod_sub(x3, x3, t1, p_mod)
+    # Y3 = rr*(V - X3) - 2*S1*J
+    var y3: u32[8]
+    mod_sub(t1, v_val, x3, p_mod)
+    mont_mul(y3, rr, t1, p_mod, n0_p)
+    mont_mul(t1, s1, j_val, p_mod, n0_p)
+    mod_add(t1, t1, t1, p_mod)
+    mod_sub(y3, y3, t1, p_mod)
+    # Z3 = ((Z1+Z2)^2 - Z1Z1 - Z2Z2) * H
+    var z3: u32[8]
+    mod_add(z3, p1.z, p2.z, p_mod)
+    mont_mul(z3, z3, z3, p_mod, n0_p)
+    mod_sub(z3, z3, z1z1, p_mod)
+    mod_sub(z3, z3, z2z2, p_mod)
+    mont_mul(z3, z3, h, p_mod, n0_p)
+    bn_copy(o.x, x3)
+    bn_copy(o.y, y3)
+    bn_copy(o.z, z3)
+
+func scalar_mul(o: Point*, k: const u32[], base: const Point*):
+    set_infinity(o)
+    var i = 255
+    while i >= 0:
+        jac_double(o, o)
+        if bit_at(k, i) == 1:
+            jac_add(o, o, base)
+        i -= 1
+
+## Affine x-coordinate (ordinary form) of a Jacobian point: X * (Z^-1)^2.
+func affine_x(out: u32[], pnt: const Point*):
+    var z_inv: u32[8]
+    var z_inv_plain: u32[8]
+    from_mont(z_inv_plain, pnt.z, p_mod, n0_p)
+    mod_inverse(z_inv, z_inv_plain, p_mod, n0_p, r2_p, one_p)
+    # bring z_inv into Montgomery, square, multiply by X (Montgomery), leave ordinary
+    var zi_m: u32[8]
+    to_mont(zi_m, z_inv, r2_p, p_mod, n0_p)
+    var zi2: u32[8]
+    mont_mul(zi2, zi_m, zi_m, p_mod, n0_p)
+    var xm: u32[8]
+    mont_mul(xm, pnt.x, zi2, p_mod, n0_p)
+    from_mont(out, xm, p_mod, n0_p)
+
+func bytes_to_bn(out: u32[], bytes: const u8[]):
+    for i in 0..<8:
+        let base = (usize)((7 - i) * 4)
+        out[i] = ((u32)bytes[base] << 24) | ((u32)bytes[base + 1] << 16) | ((u32)bytes[base + 2] << 8) | (u32)bytes[base + 3]
+
+func load_point(o: Point*, x_bytes: const u8[], y_bytes: const u8[]):
+    var xp: u32[8]
+    var yp: u32[8]
+    bytes_to_bn(xp, x_bytes)
+    bytes_to_bn(yp, y_bytes)
+    to_mont(o.x, xp, r2_p, p_mod, n0_p)
+    to_mont(o.y, yp, r2_p, p_mod, n0_p)
+    bn_copy(o.z, one_p)
+
+## Whether the affine point (x, y) in ordinary form satisfies y^2 = x^3 - 3x + b.
+func on_curve(x_plain: const u32[], y_plain: const u32[]) -> bool:
+    var xm: u32[8]
+    var ym: u32[8]
+    to_mont(xm, x_plain, r2_p, p_mod, n0_p)
+    to_mont(ym, y_plain, r2_p, p_mod, n0_p)
+    var lhs: u32[8]
+    mont_mul(lhs, ym, ym, p_mod, n0_p)
+    var rhs: u32[8]
+    mont_mul(rhs, xm, xm, p_mod, n0_p)
+    mont_mul(rhs, rhs, xm, p_mod, n0_p)
+    # - 3x
+    var three_x: u32[8]
+    mod_add(three_x, xm, xm, p_mod)
+    mod_add(three_x, three_x, xm, p_mod)
+    mod_sub(rhs, rhs, three_x, p_mod)
+    var bm: u32[8]
+    to_mont(bm, b_coef, r2_p, p_mod, n0_p)
+    mod_add(rhs, rhs, bm, p_mod)
+    return bn_cmp(lhs, rhs) == 0
+
+## Verify an ECDSA-P256 signature. Q = (qx, qy), the message digest and (r, s) are
+## each 32 big-endian bytes. Returns whether the signature is valid.
+pub func verify(qx: const u8[], qy: const u8[], digest: const u8[], r_bytes: const u8[], s_bytes: const u8[]) -> bool!:
+    if qx.length < 32 or qy.length < 32 or digest.length < 32 or r_bytes.length < 32 or s_bytes.length < 32:
+        error(sha2.invalid, "ECDSA-P256 inputs must be 32 bytes each")
+    var r: u32[8]
+    var s: u32[8]
+    var e: u32[8]
+    bytes_to_bn(r, r_bytes)
+    bytes_to_bn(s, s_bytes)
+    bytes_to_bn(e, digest)
+    if bn_is_zero(r) or bn_cmp(r, n_mod) >= 0:
+        return false
+    if bn_is_zero(s) or bn_cmp(s, n_mod) >= 0:
+        return false
+    var qxp: u32[8]
+    var qyp: u32[8]
+    bytes_to_bn(qxp, qx)
+    bytes_to_bn(qyp, qy)
+    if bn_cmp(qxp, p_mod) >= 0 or bn_cmp(qyp, p_mod) >= 0:
+        return false
+    if not on_curve(qxp, qyp):
+        return false
+    if bn_cmp(e, n_mod) >= 0:
+        discard(bn_sub(e, e, n_mod))
+    var w: u32[8]
+    mod_inverse(w, s, n_mod, n0_n, r2_n, one_n)
+    var u1: u32[8]
+    var u2: u32[8]
+    mul_mod(u1, e, w, n_mod, n0_n, r2_n)
+    mul_mod(u2, r, w, n_mod, n0_n, r2_n)
+    var g_point: Point
+    bn_copy(g_point.z, one_p)
+    to_mont(g_point.x, g_x, r2_p, p_mod, n0_p)
+    to_mont(g_point.y, g_y, r2_p, p_mod, n0_p)
+    var q_point: Point
+    load_point(&q_point, qx, qy)
+    var r1: Point
+    var r2p: Point
+    scalar_mul(&r1, u1, &g_point)
+    scalar_mul(&r2p, u2, &q_point)
+    var sum: Point
+    jac_add(&sum, &r1, &r2p)
+    if is_infinity(&sum):
+        return false
+    var xa: u32[8]
+    affine_x(xa, &sum)
+    if bn_cmp(xa, n_mod) >= 0:
+        discard(bn_sub(xa, xa, n_mod))
+    return bn_cmp(xa, r) == 0
+
+test "ecdsa-p256 verifies the RFC 6979 sample signature":
+    let qx = b"\x60\xfe\xd4\xba\x25\x5a\x9d\x31\xc9\x61\xeb\x74\xc6\x35\x6d\x68\xc0\x49\xb8\x92\x3b\x61\xfa\x6c\xe6\x69\x62\x2e\x60\xf2\x9f\xb6"
+    let qy = b"\x79\x03\xfe\x10\x08\xb8\xbc\x99\xa4\x1a\xe9\xe9\x56\x28\xbc\x64\xf2\xf1\xb2\x0c\x2d\x7e\x9f\x51\x77\xa3\xc2\x94\xd4\x46\x22\x99"
+    let e = b"\xaf\x2b\xdb\xe1\xaa\x9b\x6e\xc1\xe2\xad\xe1\xd6\x94\xf4\x1f\xc7\x1a\x83\x1d\x02\x68\xe9\x89\x15\x62\x11\x3d\x8a\x62\xad\xd1\xbf"
+    let r = b"\xef\xd4\x8b\x2a\xac\xb6\xa8\xfd\x11\x40\xdd\x9c\xd4\x5e\x81\xd6\x9d\x2c\x87\x7b\x56\xaa\xf9\x91\xc3\x4d\x0e\xa8\x4e\xaf\x37\x16"
+    let s = b"\xf7\xcb\x1c\x94\x2d\x65\x7c\x41\xd4\x36\xc7\xa1\xb6\xe2\x9f\x65\xf3\xe9\x00\xdb\xb9\xaf\xf4\x06\x4d\xc4\xab\x2f\x84\x3a\xcd\xa8"
+    assert(try verify(qx, qy, e, r, s))
+    # A tampered s must be rejected.
+    let bad = b"\xf7\xcb\x1c\x94\x2d\x65\x7c\x41\xd4\x36\xc7\xa1\xb6\xe2\x9f\x65\xf3\xe9\x00\xdb\xb9\xaf\xf4\x06\x4d\xc4\xab\x2f\x84\x3a\xcd\xa9"
+    assert(not (try verify(qx, qy, e, r, bad)))

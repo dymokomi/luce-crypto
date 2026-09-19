@@ -10,6 +10,7 @@ import luce_crypto.sha1 as sha1
 import luce_crypto.shake as shake
 import luce_crypto.mldsa as mldsa
 import luce_crypto.x25519 as curve
+import luce_crypto.p256 as p256
 
 pub type Hash = sha2.Hash
 pub type Hmac = mac.Hmac
@@ -86,6 +87,10 @@ pub func x25519(out: u8[], scalar: const u8[], point: const u8[]) -> !:
 
 pub func x25519_base(out: u8[], scalar: const u8[]) -> !:
     try curve.scalarmult_base(out, scalar)
+
+## Verify an ECDSA P-256 signature; each argument is 32 big-endian bytes.
+pub func ecdsa_p256_verify(qx: const u8[], qy: const u8[], digest: const u8[], r: const u8[], s: const u8[]) -> bool!:
+    return try p256.verify(qx, qy, digest, r, s)
 
 pub func wipe(data: u8[]):
     secure.wipe(data)
