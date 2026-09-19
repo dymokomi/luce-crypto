@@ -52,7 +52,8 @@ That does **not** erase other copies, compiler spills/registers, swap or core du
 The pinned native compiler ignores `noinline`; the package does not treat it as a
 security barrier. Functional tests and retained assembly are not independent
 security/side-channel review. Experimental ChaCha20-Poly1305 / XChaCha20-Poly1305, FIPS 202 SHAKE128/256,
-FIPS 204 ML-DSA-65 and SHA-1 (Git object IDs only) are implemented. Argon2id
+FIPS 204 ML-DSA-65, SHA-1 (Git object IDs only), and ECDSA P-256
+(verify, sign, keygen) are implemented. Argon2id
 cost calibration, hardened custody, side-channel review and TLS remain required
 infrastructure work. No production keys or credentials are created.
 See [keyed APIs and memory limits](docs/KEYED.md).

@@ -1,10 +1,10 @@
-## NIST P-256 (secp256r1) ECDSA signature verification — the only signature
-## algorithm in the certificate chains this client validates. A field element is
+## NIST P-256 (secp256r1) ECDSA: verify, sign and keygen. A field element is
 ## eight little-endian 32-bit limbs; modular arithmetic is Montgomery form with SOS
 ## reduction, so the prime field (mod p) and the scalar field (mod n) share one
 ## path. Verification touches only public values, so plain double-and-add and
-## data-dependent branches are acceptable here. Base traps on unsigned overflow, so
-## every carry and borrow is explicit.
+## data-dependent branches are acceptable here. Signing samples a nonce from the
+## OS RNG. Base traps on unsigned overflow, so every carry and borrow is explicit.
+import os
 import luce_crypto.sha2 as sha2
 
 let p_mod: u32[8] = [0xffffffff, 0xffffffff, 0xffffffff, 0x00000000, 0x00000000, 0x00000000, 0x00000001, 0xffffffff]
@@ -395,6 +395,123 @@ pub func verify(qx: const u8[], qy: const u8[], digest: const u8[], r_bytes: con
         discard(bn_sub(xa, xa, n_mod))
     return bn_cmp(xa, r) == 0
 
+func bn_to_bytes(out: u8[], a: const u32[]):
+    for i in 0..<8:
+        let v = a[7 - i]
+        let base = i * 4
+        out[base] = (u8)(v >> 24)
+        out[base + 1] = (u8)(v >> 16)
+        out[base + 2] = (u8)(v >> 8)
+        out[base + 3] = (u8)v
+
+func affine_xy(x_out: u32[], y_out: u32[], pnt: const Point*):
+    var z_plain: u32[8]
+    var z_inv: u32[8]
+    from_mont(z_plain, pnt.z, p_mod, n0_p)
+    mod_inverse(z_inv, z_plain, p_mod, n0_p, r2_p, one_p)
+    var zi_m: u32[8]
+    to_mont(zi_m, z_inv, r2_p, p_mod, n0_p)
+    var zi2: u32[8]
+    mont_mul(zi2, zi_m, zi_m, p_mod, n0_p)
+    var zi3: u32[8]
+    mont_mul(zi3, zi2, zi_m, p_mod, n0_p)
+    var xm: u32[8]
+    mont_mul(xm, pnt.x, zi2, p_mod, n0_p)
+    from_mont(x_out, xm, p_mod, n0_p)
+    var ym: u32[8]
+    mont_mul(ym, pnt.y, zi3, p_mod, n0_p)
+    from_mont(y_out, ym, p_mod, n0_p)
+
+func load_base(o: Point*):
+    to_mont(o.x, g_x, r2_p, p_mod, n0_p)
+    to_mont(o.y, g_y, r2_p, p_mod, n0_p)
+    bn_copy(o.z, one_p)
+
+func sample_scalar(out: u32[]) -> !:
+    var raw: u8[32]
+    var tries: usize = 0
+    while tries < 64:
+        try os.random_bytes(raw)
+        bytes_to_bn(out, raw)
+        if not bn_is_zero(out) and bn_cmp(out, n_mod) < 0:
+            return
+        tries += 1
+    error(sha2.invalid, "could not sample a P-256 scalar")
+
+## Q = d·G. `d`, `qx` and `qy` are 32 big-endian bytes.
+pub func public_from_private(d_bytes: const u8[], qx: u8[], qy: u8[]) -> !:
+    if d_bytes.length < 32 or qx.length < 32 or qy.length < 32:
+        error(sha2.invalid, "ECDSA-P256 inputs must be 32 bytes each")
+    var d: u32[8]
+    bytes_to_bn(d, d_bytes)
+    if bn_is_zero(d) or bn_cmp(d, n_mod) >= 0:
+        error(sha2.invalid, "ECDSA-P256 private key is out of range")
+    var g_point: Point
+    load_base(&g_point)
+    var q_point: Point
+    scalar_mul(&q_point, d, &g_point)
+    if is_infinity(&q_point):
+        error(sha2.invalid, "ECDSA-P256 public key is the point at infinity")
+    var xa: u32[8]
+    var ya: u32[8]
+    affine_xy(xa, ya, &q_point)
+    bn_to_bytes(qx, xa)
+    bn_to_bytes(qy, ya)
+
+pub func keygen(d_bytes: u8[], qx: u8[], qy: u8[]) -> !:
+    if d_bytes.length < 32 or qx.length < 32 or qy.length < 32:
+        error(sha2.invalid, "ECDSA-P256 inputs must be 32 bytes each")
+    var d: u32[8]
+    try sample_scalar(d)
+    bn_to_bytes(d_bytes, d)
+    try public_from_private(d_bytes, qx, qy)
+
+## Sign a 32-byte digest with private key `d`. `r` and `s` are 32 big-endian bytes.
+pub func sign(d_bytes: const u8[], digest: const u8[], r_bytes: u8[], s_bytes: u8[]) -> !:
+    if d_bytes.length < 32 or digest.length < 32 or r_bytes.length < 32 or s_bytes.length < 32:
+        error(sha2.invalid, "ECDSA-P256 inputs must be 32 bytes each")
+    var d: u32[8]
+    bytes_to_bn(d, d_bytes)
+    if bn_is_zero(d) or bn_cmp(d, n_mod) >= 0:
+        error(sha2.invalid, "ECDSA-P256 private key is out of range")
+    var e: u32[8]
+    bytes_to_bn(e, digest)
+    if bn_cmp(e, n_mod) >= 0:
+        discard(bn_sub(e, e, n_mod))
+    var g_point: Point
+    load_base(&g_point)
+    var tries: usize = 0
+    while tries < 64:
+        var k: u32[8]
+        try sample_scalar(k)
+        var r_point: Point
+        scalar_mul(&r_point, k, &g_point)
+        if is_infinity(&r_point):
+            tries += 1
+            continue
+        var xa: u32[8]
+        affine_x(xa, &r_point)
+        if bn_cmp(xa, n_mod) >= 0:
+            discard(bn_sub(xa, xa, n_mod))
+        if bn_is_zero(xa):
+            tries += 1
+            continue
+        var k_inv: u32[8]
+        mod_inverse(k_inv, k, n_mod, n0_n, r2_n, one_n)
+        var rd: u32[8]
+        mul_mod(rd, xa, d, n_mod, n0_n, r2_n)
+        var t: u32[8]
+        mod_add(t, e, rd, n_mod)
+        var s: u32[8]
+        mul_mod(s, k_inv, t, n_mod, n0_n, r2_n)
+        if bn_is_zero(s):
+            tries += 1
+            continue
+        bn_to_bytes(r_bytes, xa)
+        bn_to_bytes(s_bytes, s)
+        return
+    error(sha2.invalid, "could not form an ECDSA-P256 signature")
+
 test "ecdsa-p256 verifies the RFC 6979 sample signature":
     let qx = b"\x60\xfe\xd4\xba\x25\x5a\x9d\x31\xc9\x61\xeb\x74\xc6\x35\x6d\x68\xc0\x49\xb8\x92\x3b\x61\xfa\x6c\xe6\x69\x62\x2e\x60\xf2\x9f\xb6"
     let qy = b"\x79\x03\xfe\x10\x08\xb8\xbc\x99\xa4\x1a\xe9\xe9\x56\x28\xbc\x64\xf2\xf1\xb2\x0c\x2d\x7e\x9f\x51\x77\xa3\xc2\x94\xd4\x46\x22\x99"
@@ -405,3 +522,27 @@ test "ecdsa-p256 verifies the RFC 6979 sample signature":
     # A tampered s must be rejected.
     let bad = b"\xf7\xcb\x1c\x94\x2d\x65\x7c\x41\xd4\x36\xc7\xa1\xb6\xe2\x9f\x65\xf3\xe9\x00\xdb\xb9\xaf\xf4\x06\x4d\xc4\xab\x2f\x84\x3a\xcd\xa9"
     assert(not (try verify(qx, qy, e, r, bad)))
+
+test "ecdsa-p256 public_from_private matches RFC 6979":
+    let d = b"\xc9\xaf\xa9\xd8\x45\xba\x75\x16\x6b\x5c\x21\x57\x67\xb1\xd6\x93\x4e\x50\xc3\xdb\x36\xe8\x9b\x12\x7b\x8a\x62\x2b\x12\x0f\x67\x21"
+    let qx = b"\x60\xfe\xd4\xba\x25\x5a\x9d\x31\xc9\x61\xeb\x74\xc6\x35\x6d\x68\xc0\x49\xb8\x92\x3b\x61\xfa\x6c\xe6\x69\x62\x2e\x60\xf2\x9f\xb6"
+    let qy = b"\x79\x03\xfe\x10\x08\xb8\xbc\x99\xa4\x1a\xe9\xe9\x56\x28\xbc\x64\xf2\xf1\xb2\x0c\x2d\x7e\x9f\x51\x77\xa3\xc2\x94\xd4\x46\x22\x99"
+    var got_x: u8[32]
+    var got_y: u8[32]
+    try public_from_private(d, got_x, got_y)
+    for i in 0..<32:
+        assert(got_x[i] == qx[i])
+        assert(got_y[i] == qy[i])
+
+test "ecdsa-p256 sign verifies":
+    var d: u8[32]
+    var qx: u8[32]
+    var qy: u8[32]
+    try keygen(d, qx, qy)
+    let e = b"\xaf\x2b\xdb\xe1\xaa\x9b\x6e\xc1\xe2\xad\xe1\xd6\x94\xf4\x1f\xc7\x1a\x83\x1d\x02\x68\xe9\x89\x15\x62\x11\x3d\x8a\x62\xad\xd1\xbf"
+    var r: u8[32]
+    var s: u8[32]
+    try sign(d, e, r, s)
+    assert(try verify(qx, qy, e, r, s))
+    s[31] = s[31] ^ 1
+    assert(not (try verify(qx, qy, e, r, s)))

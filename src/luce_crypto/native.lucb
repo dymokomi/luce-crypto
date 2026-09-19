@@ -92,6 +92,15 @@ pub func x25519_base(out: u8[], scalar: const u8[]) -> !:
 pub func ecdsa_p256_verify(qx: const u8[], qy: const u8[], message: const u8[], r: const u8[], s: const u8[]) -> bool!:
     return try p256.verify(qx, qy, message, r, s)
 
+pub func ecdsa_p256_public(d: const u8[], qx: u8[], qy: u8[]) -> !:
+    try p256.public_from_private(d, qx, qy)
+
+pub func ecdsa_p256_keygen(d: u8[], qx: u8[], qy: u8[]) -> !:
+    try p256.keygen(d, qx, qy)
+
+pub func ecdsa_p256_sign(d: const u8[], message: const u8[], r: u8[], s: u8[]) -> !:
+    try p256.sign(d, message, r, s)
+
 pub func wipe(data: u8[]):
     secure.wipe(data)
 
