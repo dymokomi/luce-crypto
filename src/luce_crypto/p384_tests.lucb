@@ -1,0 +1,44 @@
+## RFC 6979 P-384/SHA-384 verification plus strict negative cases.
+import luce_crypto.p384 as p384
+import luce_crypto.sha2 as sha2
+import crypto_native
+
+let qx = b"\xec\x3a\x4e\x41\x5b\x4e\x19\xa4\x56\x86\x18\x02\x9f\x42\x7f\xa5\xda\x9a\x8b\xc4\xae\x92\xe0\x2e\x06\xaa\xe5\x28\x6b\x30\x0c\x64\xde\xf8\xf0\xea\x90\x55\x86\x60\x64\xa2\x54\x51\x54\x80\xbc\x13"
+let qy = b"\x80\x15\xd9\xb7\x2d\x7d\x57\x24\x4e\xa8\xef\x9a\xc0\xc6\x21\x89\x67\x08\xa5\x93\x67\xf9\xdf\xb9\xf5\x4c\xa8\x4b\x3f\x1c\x9d\xb1\x28\x8b\x23\x1c\x3a\xe0\xd4\xfe\x73\x44\xfd\x25\x33\x26\x47\x20"
+let r = b"\x94\xed\xbb\x92\xa5\xec\xb8\xaa\xd4\x73\x6e\x56\xc6\x91\x91\x6b\x3f\x88\x14\x06\x66\xce\x9f\xa7\x3d\x64\xc4\xea\x95\xad\x13\x3c\x81\xa6\x48\x15\x2e\x44\xac\xf9\x6e\x36\xdd\x1e\x80\xfa\xbe\x46"
+let s = b"\x99\xef\x4a\xeb\x15\xf1\x78\xce\xa1\xfe\x40\xdb\x26\x03\x13\x8f\x13\x0e\x74\x0a\x19\x62\x45\x26\x20\x3b\x63\x51\xd0\xa3\xa9\x4f\xa3\x29\xc1\x45\x78\x6e\x67\x9e\x7b\x82\xc7\x1a\x38\x62\x8a\xc8"
+
+pub func main(arguments: str[]) -> i32!:
+    discard(arguments)
+    var digest: u8[48]
+    assert(try sha2.digest(b"sample", digest, "sha384") == 48)
+    assert(try p384.verify(qx, qy, digest, r, s))
+    assert(try crypto_native.ecdsa_p384_verify(qx, qy, digest, r, s))
+    var changed: u8[48]
+    for i in 0..<48: changed[i] = s[i]
+    changed[47] ^= 1
+    assert(not (try p384.verify(qx, qy, digest, r, changed)))
+    for i in 0..<48: changed[i] = digest[i]
+    changed[0] ^= 1
+    assert(not (try p384.verify(qx, qy, changed, r, s)))
+    for i in 0..<48: changed[i] = qx[i]
+    changed[0] ^= 1
+    assert(not (try p384.verify(changed, qy, digest, r, s)))
+    for i in 0..<48: changed[i] = 0
+    assert(not (try p384.verify(qx, qy, digest, changed, s)))
+    assert(not (try p384.verify(qx, qy, digest, r, changed)))
+    var rejected = false
+    discard(p384.verify(qx[..<47], qy, digest, r, s) catch failure:
+        assert(failure.code == sha2.invalid)
+        rejected = true
+        recover false)
+    assert(rejected)
+    rejected = false
+    var too_long: u8[49]
+    discard(p384.verify(qx, qy, digest, r, too_long) catch failure:
+        assert(failure.code == sha2.invalid)
+        rejected = true
+        recover false)
+    assert(rejected)
+    print("PASS p384 RFC 6979 verification and strict negative cases")
+    return 0

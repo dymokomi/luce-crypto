@@ -52,8 +52,10 @@ That does **not** erase other copies, compiler spills/registers, swap or core du
 The pinned native compiler ignores `noinline`; the package does not treat it as a
 security barrier. Functional tests and retained assembly are not independent
 security/side-channel review. Experimental ChaCha20-Poly1305 / XChaCha20-Poly1305, FIPS 202 SHAKE128/256,
-FIPS 204 ML-DSA-65, SHA-1 (Git object IDs only), and ECDSA P-256
-(verify, sign, keygen) are implemented. Argon2id
+FIPS 204 ML-DSA-65, SHA-1 (Git object IDs only), ECDSA P-256
+(verify, sign, keygen), and public-data ECDSA P-384 verification are implemented.
+P-384 accepts exact-width SHA-384 digests for certificate-chain validation; it
+is not a secret-scalar or constant-time implementation. Argon2id
 cost calibration, hardened custody, side-channel review and TLS remain required
 infrastructure work. No production keys or credentials are created.
 See [keyed APIs and memory limits](docs/KEYED.md).
@@ -75,7 +77,7 @@ python3 tools/codegen_probe.py
 ```
 
 Or supply `--base /path/to/luce-base --luce /path/to/luce` to `tests/run.py`.
-The runner builds and executes dedicated X25519 and P-256 vector programs in
+The runner builds and executes dedicated X25519, P-256 and P-384 vector programs in
 all six modes; these programs are also included in sanitizer and prebuilt-bundle
 checks. They cover RFC 7748 scalar multiplication/Diffie–Hellman, RFC 6979
 verification/public-key derivation, and P-256 signing/tampering. They are not a

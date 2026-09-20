@@ -1,0 +1,352 @@
+## NIST P-384 (secp384r1) ECDSA verification. Field and scalar values are twelve
+## little-endian 32-bit limbs and use Montgomery arithmetic. Verification handles
+## public data only; its branches are not a secret-scalar constant-time contract.
+import luce_crypto.sha2 as sha2
+
+let p_mod: u32[12] = [0xffffffff, 0x00000000, 0x00000000, 0xffffffff, 0xfffffffe, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff]
+let n_mod: u32[12] = [0xccc52973, 0xecec196a, 0x48b0a77a, 0x581a0db2, 0xf4372ddf, 0xc7634d81, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff]
+let b_coef: u32[12] = [0xd3ec2aef, 0x2a85c8ed, 0x8a2ed19d, 0xc656398d, 0x5013875a, 0x0314088f, 0xfe814112, 0x181d9c6e, 0xe3f82d19, 0x988e056b, 0xe23ee7e4, 0xb3312fa7]
+let g_x: u32[12] = [0x72760ab7, 0x3a545e38, 0xbf55296c, 0x5502f25d, 0x82542a38, 0x59f741e0, 0x8ba79b98, 0x6e1d3b62, 0xf320ad74, 0x8eb1c71e, 0xbe8b0537, 0xaa87ca22]
+let g_y: u32[12] = [0x90ea0e5f, 0x7a431d7c, 0x1d7e819d, 0x0a60b1ce, 0xb5f0b8c0, 0xe9da3113, 0x289a147c, 0xf8f41dbd, 0x9292dc29, 0x5d9e98bf, 0x96262c6f, 0x3617de4a]
+let r2_p: u32[12] = [0x00000001, 0xfffffffe, 0x00000000, 0x00000002, 0x00000000, 0xfffffffe, 0x00000000, 0x00000002, 0x00000001, 0x00000000, 0x00000000, 0x00000000]
+let r2_n: u32[12] = [0x19b409a9, 0x2d319b24, 0xdf1aa419, 0xff3d81e5, 0xfcb82947, 0xbc3e483a, 0x4aab1cc5, 0xd40d4917, 0x28266895, 0x3fb05b7a, 0x2b39bf21, 0x0c84ee01]
+let one_p: u32[12] = [0x00000001, 0xffffffff, 0xffffffff, 0x00000000, 0x00000001, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000]
+let one_n: u32[12] = [0x333ad68d, 0x1313e695, 0xb74f5885, 0xa7e5f24d, 0x0bc8d220, 0x389cb27e, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000]
+let n0_p: u32 = 0x00000001
+let n0_n: u32 = 0xe88fdc45
+
+struct Point:
+    var x: u32[12]
+    var y: u32[12]
+    var z: u32[12]
+
+func bn_copy(dst: u32[], src: const u32[]):
+    for i in 0..<12: dst[i] = src[i]
+
+func bn_zero(a: u32[]):
+    for i in 0..<12: a[i] = 0
+
+func bn_is_zero(a: const u32[]) -> bool:
+    var value: u32
+    for i in 0..<12: value |= a[i]
+    return value == 0
+
+func bn_cmp(a: const u32[], b: const u32[]) -> i32:
+    var i = 11
+    while i >= 0:
+        if a[(usize)i] != b[(usize)i]: return 1 if a[(usize)i] > b[(usize)i] else -1
+        i -= 1
+    return 0
+
+func bn_add(out: u32[], a: const u32[], b: const u32[]) -> u32:
+    var carry: u64
+    for i in 0..<12:
+        let sum = (u64)a[i] + (u64)b[i] + carry
+        out[i] = (u32)sum
+        carry = sum >> 32
+    return (u32)carry
+
+func bn_sub(out: u32[], a: const u32[], b: const u32[]) -> u32:
+    var borrow: u64
+    for i in 0..<12:
+        let left = (u64)a[i]
+        let right = (u64)b[i] + borrow
+        if left >= right:
+            out[i] = (u32)(left - right)
+            borrow = 0
+        else:
+            out[i] = (u32)(left + 0x100000000 - right)
+            borrow = 1
+    return (u32)borrow
+
+func mod_add(out: u32[], a: const u32[], b: const u32[], modulus: const u32[]):
+    let carry = bn_add(out, a, b)
+    if carry != 0 or bn_cmp(out, modulus) >= 0: discard(bn_sub(out, out, modulus))
+
+func mod_sub(out: u32[], a: const u32[], b: const u32[], modulus: const u32[]):
+    if bn_sub(out, a, b) != 0: discard(bn_add(out, out, modulus))
+
+func multiply(out: u32[], a: const u32[], b: const u32[]):
+    for i in 0..<24: out[i] = 0
+    for i in 0..<12:
+        var carry: u64
+        for j in 0..<12:
+            let value = (u64)a[i] * (u64)b[j] + (u64)out[i + j] + carry
+            out[i + j] = (u32)value
+            carry = value >> 32
+        out[i + 12] = (u32)carry
+
+func mont_reduce(out: u32[], product: const u32[], modulus: const u32[], n0: u32):
+    var work: u32[25]
+    for i in 0..<24: work[i] = product[i]
+    work[24] = 0
+    for i in 0..<12:
+        let factor = (u32)((u64)work[i] * (u64)n0)
+        var carry: u64
+        for j in 0..<12:
+            let value = (u64)factor * (u64)modulus[j] + (u64)work[i + j] + carry
+            work[i + j] = (u32)value
+            carry = value >> 32
+        var at = i + 12
+        while carry != 0 and at < 25:
+            let value = (u64)work[at] + carry
+            work[at] = (u32)value
+            carry = value >> 32
+            at += 1
+    var result: u32[12]
+    for i in 0..<12: result[i] = work[12 + i]
+    if work[24] != 0 or bn_cmp(result, modulus) >= 0: discard(bn_sub(result, result, modulus))
+    bn_copy(out, result)
+
+func mont_mul(out: u32[], a: const u32[], b: const u32[], modulus: const u32[], n0: u32):
+    var product: u32[24]
+    multiply(product, a, b)
+    mont_reduce(out, product, modulus, n0)
+
+func to_mont(out: u32[], value: const u32[], r2: const u32[], modulus: const u32[], n0: u32):
+    mont_mul(out, value, r2, modulus, n0)
+
+func from_mont(out: u32[], value: const u32[], modulus: const u32[], n0: u32):
+    var product: u32[24]
+    for i in 0..<12:
+        product[i] = value[i]
+        product[i + 12] = 0
+    mont_reduce(out, product, modulus, n0)
+
+func mul_mod(out: u32[], a: const u32[], b: const u32[], modulus: const u32[], n0: u32, r2: const u32[]):
+    var temporary: u32[12]
+    mont_mul(temporary, a, b, modulus, n0)
+    mont_mul(out, temporary, r2, modulus, n0)
+
+func bit_at(value: const u32[], index: i64) -> u32:
+    return (value[(usize)(index >> 5)] >> (u32)(index & 31)) & 1
+
+func inverse(out: u32[], value: const u32[], modulus: const u32[], n0: u32,
+             r2: const u32[], one: const u32[]):
+    var base: u32[12]
+    to_mont(base, value, r2, modulus, n0)
+    var result: u32[12]
+    bn_copy(result, one)
+    var exponent: u32[12]
+    bn_copy(exponent, modulus)
+    exponent[0] = modulus[0] - 2
+    var i = 383
+    while i >= 0:
+        mont_mul(result, result, result, modulus, n0)
+        if bit_at(exponent, i) == 1: mont_mul(result, result, base, modulus, n0)
+        i -= 1
+    from_mont(out, result, modulus, n0)
+
+func point_copy(out: Point*, value: const Point*):
+    bn_copy(out.x, value.x)
+    bn_copy(out.y, value.y)
+    bn_copy(out.z, value.z)
+
+func infinity(out: Point*):
+    bn_copy(out.x, one_p)
+    bn_copy(out.y, one_p)
+    bn_zero(out.z)
+
+func is_infinity(value: const Point*) -> bool:
+    return bn_is_zero(value.z)
+
+func double(out: Point*, point: const Point*):
+    if bn_is_zero(point.z):
+        infinity(out)
+        return
+    var delta: u32[12]
+    var gamma: u32[12]
+    var beta: u32[12]
+    var alpha: u32[12]
+    var first: u32[12]
+    var second: u32[12]
+    mont_mul(delta, point.z, point.z, p_mod, n0_p)
+    mont_mul(gamma, point.y, point.y, p_mod, n0_p)
+    mont_mul(beta, point.x, gamma, p_mod, n0_p)
+    mod_sub(first, point.x, delta, p_mod)
+    mod_add(second, point.x, delta, p_mod)
+    mont_mul(alpha, first, second, p_mod, n0_p)
+    mod_add(first, alpha, alpha, p_mod)
+    mod_add(alpha, first, alpha, p_mod)
+    var z3: u32[12]
+    mod_add(first, point.y, point.z, p_mod)
+    mont_mul(first, first, first, p_mod, n0_p)
+    mod_sub(first, first, gamma, p_mod)
+    mod_sub(z3, first, delta, p_mod)
+    var x3: u32[12]
+    mont_mul(x3, alpha, alpha, p_mod, n0_p)
+    mod_add(first, beta, beta, p_mod)
+    mod_add(first, first, first, p_mod)
+    mod_add(first, first, first, p_mod)
+    mod_sub(x3, x3, first, p_mod)
+    var y3: u32[12]
+    mod_add(second, beta, beta, p_mod)
+    mod_add(second, second, second, p_mod)
+    mod_sub(second, second, x3, p_mod)
+    mont_mul(y3, alpha, second, p_mod, n0_p)
+    mont_mul(first, gamma, gamma, p_mod, n0_p)
+    mod_add(first, first, first, p_mod)
+    mod_add(first, first, first, p_mod)
+    mod_add(first, first, first, p_mod)
+    mod_sub(y3, y3, first, p_mod)
+    bn_copy(out.x, x3)
+    bn_copy(out.y, y3)
+    bn_copy(out.z, z3)
+
+func add(out: Point*, left: const Point*, right: const Point*):
+    if bn_is_zero(left.z):
+        point_copy(out, right)
+        return
+    if bn_is_zero(right.z):
+        point_copy(out, left)
+        return
+    var z1z1: u32[12]
+    var z2z2: u32[12]
+    var u1: u32[12]
+    var u2: u32[12]
+    var s1: u32[12]
+    var s2: u32[12]
+    var h: u32[12]
+    var first: u32[12]
+    mont_mul(z1z1, left.z, left.z, p_mod, n0_p)
+    mont_mul(z2z2, right.z, right.z, p_mod, n0_p)
+    mont_mul(u1, left.x, z2z2, p_mod, n0_p)
+    mont_mul(u2, right.x, z1z1, p_mod, n0_p)
+    mont_mul(first, right.z, z2z2, p_mod, n0_p)
+    mont_mul(s1, left.y, first, p_mod, n0_p)
+    mont_mul(first, left.z, z1z1, p_mod, n0_p)
+    mont_mul(s2, right.y, first, p_mod, n0_p)
+    mod_sub(h, u2, u1, p_mod)
+    var rr: u32[12]
+    mod_sub(rr, s2, s1, p_mod)
+    if bn_is_zero(h):
+        if bn_is_zero(rr): double(out, left)
+        else: infinity(out)
+        return
+    var i_value: u32[12]
+    var j_value: u32[12]
+    var v_value: u32[12]
+    mod_add(i_value, h, h, p_mod)
+    mont_mul(i_value, i_value, i_value, p_mod, n0_p)
+    mont_mul(j_value, h, i_value, p_mod, n0_p)
+    mod_add(rr, rr, rr, p_mod)
+    mont_mul(v_value, u1, i_value, p_mod, n0_p)
+    var x3: u32[12]
+    mont_mul(x3, rr, rr, p_mod, n0_p)
+    mod_sub(x3, x3, j_value, p_mod)
+    mod_add(first, v_value, v_value, p_mod)
+    mod_sub(x3, x3, first, p_mod)
+    var y3: u32[12]
+    mod_sub(first, v_value, x3, p_mod)
+    mont_mul(y3, rr, first, p_mod, n0_p)
+    mont_mul(first, s1, j_value, p_mod, n0_p)
+    mod_add(first, first, first, p_mod)
+    mod_sub(y3, y3, first, p_mod)
+    var z3: u32[12]
+    mod_add(z3, left.z, right.z, p_mod)
+    mont_mul(z3, z3, z3, p_mod, n0_p)
+    mod_sub(z3, z3, z1z1, p_mod)
+    mod_sub(z3, z3, z2z2, p_mod)
+    mont_mul(z3, z3, h, p_mod, n0_p)
+    bn_copy(out.x, x3)
+    bn_copy(out.y, y3)
+    bn_copy(out.z, z3)
+
+func scalar_mul(out: Point*, scalar: const u32[], base: const Point*):
+    infinity(out)
+    var i = 383
+    while i >= 0:
+        double(out, out)
+        if bit_at(scalar, i) == 1: add(out, out, base)
+        i -= 1
+
+func bytes_to_bn(out: u32[], bytes: const u8[]):
+    for i in 0..<12:
+        let base = (usize)((11 - i) * 4)
+        out[i] = ((u32)bytes[base] << 24) | ((u32)bytes[base + 1] << 16) | ((u32)bytes[base + 2] << 8) | (u32)bytes[base + 3]
+
+func load_point(out: Point*, x: const u8[], y: const u8[]):
+    var plain_x: u32[12]
+    var plain_y: u32[12]
+    bytes_to_bn(plain_x, x)
+    bytes_to_bn(plain_y, y)
+    to_mont(out.x, plain_x, r2_p, p_mod, n0_p)
+    to_mont(out.y, plain_y, r2_p, p_mod, n0_p)
+    bn_copy(out.z, one_p)
+
+func on_curve(x: const u32[], y: const u32[]) -> bool:
+    var mont_x: u32[12]
+    var mont_y: u32[12]
+    to_mont(mont_x, x, r2_p, p_mod, n0_p)
+    to_mont(mont_y, y, r2_p, p_mod, n0_p)
+    var left: u32[12]
+    mont_mul(left, mont_y, mont_y, p_mod, n0_p)
+    var right: u32[12]
+    mont_mul(right, mont_x, mont_x, p_mod, n0_p)
+    mont_mul(right, right, mont_x, p_mod, n0_p)
+    var three_x: u32[12]
+    mod_add(three_x, mont_x, mont_x, p_mod)
+    mod_add(three_x, three_x, mont_x, p_mod)
+    mod_sub(right, right, three_x, p_mod)
+    var mont_b: u32[12]
+    to_mont(mont_b, b_coef, r2_p, p_mod, n0_p)
+    mod_add(right, right, mont_b, p_mod)
+    return bn_cmp(left, right) == 0
+
+func affine_x(out: u32[], point: const Point*):
+    var z_plain: u32[12]
+    from_mont(z_plain, point.z, p_mod, n0_p)
+    var z_inverse: u32[12]
+    inverse(z_inverse, z_plain, p_mod, n0_p, r2_p, one_p)
+    var mont_inverse: u32[12]
+    to_mont(mont_inverse, z_inverse, r2_p, p_mod, n0_p)
+    var squared: u32[12]
+    mont_mul(squared, mont_inverse, mont_inverse, p_mod, n0_p)
+    var x: u32[12]
+    mont_mul(x, point.x, squared, p_mod, n0_p)
+    from_mont(out, x, p_mod, n0_p)
+
+## Verify an ECDSA-P384 signature over an already computed 48-byte digest.
+## Public-key coordinates and signature integers are exactly 48-byte big-endian values.
+pub func verify(qx: const u8[], qy: const u8[], digest: const u8[],
+                r_bytes: const u8[], s_bytes: const u8[]) -> bool!:
+    if qx.length != 48 or qy.length != 48 or digest.length != 48 or r_bytes.length != 48 or s_bytes.length != 48:
+        error(sha2.invalid, "ECDSA-P384 inputs must be exactly48 bytes each")
+    var r: u32[12]
+    var s: u32[12]
+    var e: u32[12]
+    bytes_to_bn(r, r_bytes)
+    bytes_to_bn(s, s_bytes)
+    bytes_to_bn(e, digest)
+    if bn_is_zero(r) or bn_cmp(r, n_mod) >= 0: return false
+    if bn_is_zero(s) or bn_cmp(s, n_mod) >= 0: return false
+    var plain_x: u32[12]
+    var plain_y: u32[12]
+    bytes_to_bn(plain_x, qx)
+    bytes_to_bn(plain_y, qy)
+    if bn_cmp(plain_x, p_mod) >= 0 or bn_cmp(plain_y, p_mod) >= 0: return false
+    if not on_curve(plain_x, plain_y): return false
+    if bn_cmp(e, n_mod) >= 0: discard(bn_sub(e, e, n_mod))
+    var w: u32[12]
+    inverse(w, s, n_mod, n0_n, r2_n, one_n)
+    var u1: u32[12]
+    var u2: u32[12]
+    mul_mod(u1, e, w, n_mod, n0_n, r2_n)
+    mul_mod(u2, r, w, n_mod, n0_n, r2_n)
+    var generator: Point
+    to_mont(generator.x, g_x, r2_p, p_mod, n0_p)
+    to_mont(generator.y, g_y, r2_p, p_mod, n0_p)
+    bn_copy(generator.z, one_p)
+    var public_key: Point
+    load_point(&public_key, qx, qy)
+    var left: Point
+    var right: Point
+    scalar_mul(&left, u1, &generator)
+    scalar_mul(&right, u2, &public_key)
+    var sum: Point
+    add(&sum, &left, &right)
+    if is_infinity(&sum): return false
+    var x: u32[12]
+    affine_x(x, &sum)
+    if bn_cmp(x, n_mod) >= 0: discard(bn_sub(x, x, n_mod))
+    return bn_cmp(x, r) == 0

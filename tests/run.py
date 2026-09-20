@@ -10,7 +10,7 @@ from run_prebuilt import check_all
 ROOT = Path(__file__).resolve().parents[1]
 MODES = {f"native{i}": ["--native", "--opt", str(i)] for i in range(4)}
 MODES.update({"c": ["--backend=c"], "c-release": ["--backend=c", "--release"]})
-SOURCES = [("src/luce_crypto/x25519_tests.lucb", "x25519"), ("src/luce_crypto/p256_tests.lucb", "p256"), ("src/luce_crypto/native_tests.lucb", "native"), ("tests/driver.lucb", "driver"), ("tests/file_driver.lucb", "file-driver")]
+SOURCES = [("src/luce_crypto/x25519_tests.lucb", "x25519"), ("src/luce_crypto/p256_tests.lucb", "p256"), ("src/luce_crypto/p384_tests.lucb", "p384"), ("src/luce_crypto/native_tests.lucb", "native"), ("tests/driver.lucb", "driver"), ("tests/file_driver.lucb", "file-driver")]
 SOURCES += [("src/luce_crypto/keyed_tests.lucb", "keyed-native"),
             ("src/luce_crypto/keyed_failure_tests.lucb", "keyed-failures"),
             ("tests/keyed_driver.lucb", "keyed-driver"),

@@ -30,7 +30,7 @@ def main():
         run([os.environ.get("CC", "cc"), "-std=gnu11", "-O1", "-g", "-w", "-fno-strict-aliasing",
              "-fsanitize=address,undefined", "-fno-omit-frame-pointer", "-I", runtime,
              generated, runtime / "lucb_rt.c", "-pthread", "-lm", "-o", output / name])
-    for name in ("x25519", "p256", "native", "keyed-native", "keyed-failures", "memory-probe", "argon-driver", "argon-failures", "aead-tests", "shake-tests", "mldsa-tests"):
+    for name in ("x25519", "p256", "p384", "native", "keyed-native", "keyed-failures", "memory-probe", "argon-driver", "argon-failures", "aead-tests", "shake-tests", "mldsa-tests"):
         print(checked([output / name]).stdout.decode(), end="", flush=True)
     check(output / "driver")
     check_files(output / "file-driver")
