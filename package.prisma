@@ -1,7 +1,7 @@
 #prisma 4.0
 def package "luce-crypto" {
     str owner = "dymokomi"
-    str version = "0.1.1"
+    str version = "0.1.2"
     str kind = "package"
     str language = "luce-base"
     str description = "Native Luce Base cryptography with an owning Luce API. MIT OR Apache-2.0. Provides byte-oriented incremental SHA-256/384/512, HMAC, HKDF, parallel Argon2id and experimental owned secret buffers."
