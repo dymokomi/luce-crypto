@@ -306,18 +306,26 @@ func affine_x(out: u32[], point: const Point*):
     mont_mul(x, point.x, squared, p_mod, n0_p)
     from_mont(out, x, p_mod, n0_p)
 
-## Verify an ECDSA-P384 signature over an already computed 48-byte digest.
-## Public-key coordinates and signature integers are exactly 48-byte big-endian values.
+## Verify an ECDSA-P384 signature over an already computed digest. A digest
+## shorter than 48 bytes (SHA-256) is used as is; a longer one (SHA-512) is
+## truncated to its leftmost 384 bits (SEC 1 §4.1.4). Public-key coordinates
+## and signature integers are exactly 48-byte big-endian values.
 pub func verify(qx: const u8[], qy: const u8[], digest: const u8[],
                 r_bytes: const u8[], s_bytes: const u8[]) -> bool!:
-    if qx.length != 48 or qy.length != 48 or digest.length != 48 or r_bytes.length != 48 or s_bytes.length != 48:
-        error(sha2.invalid, "ECDSA-P384 inputs must be exactly48 bytes each")
+    if qx.length != 48 or qy.length != 48 or r_bytes.length != 48 or s_bytes.length != 48:
+        error(sha2.invalid, "ECDSA-P384 key and signature values must be exactly 48 bytes each")
+    if digest.length < 20 or digest.length > 64:
+        error(sha2.invalid, "ECDSA-P384 digest must be 20 to 64 bytes")
     var r: u32[12]
     var s: u32[12]
     var e: u32[12]
     bytes_to_bn(r, r_bytes)
     bytes_to_bn(s, s_bytes)
-    bytes_to_bn(e, digest)
+    var padded: u8[48]
+    let used = digest.length if digest.length < 48 else 48
+    for i in 0..<used:
+        padded[48 - used + i] = digest[i]
+    bytes_to_bn(e, padded)
     if bn_is_zero(r) or bn_cmp(r, n_mod) >= 0: return false
     if bn_is_zero(s) or bn_cmp(s, n_mod) >= 0: return false
     var plain_x: u32[12]

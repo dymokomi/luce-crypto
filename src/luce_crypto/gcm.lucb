@@ -1,0 +1,176 @@
+## NIST SP 800-38D AES-GCM with 96-bit nonces and 128-bit tags. GHASH uses a
+## constant-time carry-less multiply built from integer multiplications with
+## holes (BearSSL `ghash_ctmul64` by Thomas Pornin, MIT; see NOTICE.md), so no
+## table is indexed by secret data. Encryption and decryption may run in place.
+import luce_crypto.aes as aes
+import luce_crypto.aead as aead
+import luce_crypto.secure as secure
+import luce_crypto.sha2 as sha2
+
+pub let invalid = sha2.invalid
+pub let length_exceeded = sha2.length_exceeded
+## The authentication tag did not verify (shared with ChaCha20-Poly1305).
+pub let forged = aead.forged
+
+## Carry-less 64x64 multiply, low 64 bits, with integer multiplies whose
+## partial sums cannot carry into the bits that are kept.
+func bmul64(x: u64, y: u64) -> u64:
+    let x0 = x & 0x1111111111111111
+    let x1 = x & 0x2222222222222222
+    let x2 = x & 0x4444444444444444
+    let x3 = x & 0x8888888888888888
+    let y0 = y & 0x1111111111111111
+    let y1 = y & 0x2222222222222222
+    let y2 = y & 0x4444444444444444
+    let y3 = y & 0x8888888888888888
+    var z0 = (x0 *% y0) ^ (x1 *% y3) ^ (x2 *% y2) ^ (x3 *% y1)
+    var z1 = (x0 *% y1) ^ (x1 *% y0) ^ (x2 *% y3) ^ (x3 *% y2)
+    var z2 = (x0 *% y2) ^ (x1 *% y1) ^ (x2 *% y0) ^ (x3 *% y3)
+    var z3 = (x0 *% y3) ^ (x1 *% y2) ^ (x2 *% y1) ^ (x3 *% y0)
+    z0 &= 0x1111111111111111
+    z1 &= 0x2222222222222222
+    z2 &= 0x4444444444444444
+    z3 &= 0x8888888888888888
+    return z0 | z1 | z2 | z3
+
+func reverse64(value: u64) -> u64:
+    var x = value
+    x = ((x & 0x5555555555555555) << 1) | ((x >> 1) & 0x5555555555555555)
+    x = ((x & 0x3333333333333333) << 2) | ((x >> 2) & 0x3333333333333333)
+    x = ((x & 0x0f0f0f0f0f0f0f0f) << 4) | ((x >> 4) & 0x0f0f0f0f0f0f0f0f)
+    x = ((x & 0x00ff00ff00ff00ff) << 8) | ((x >> 8) & 0x00ff00ff00ff00ff)
+    x = ((x & 0x0000ffff0000ffff) << 16) | ((x >> 16) & 0x0000ffff0000ffff)
+    return (x << 32) | (x >> 32)
+
+func load64(bytes: const u8[], at: usize) -> u64:
+    var value: u64 = 0
+    for i in 0..<(usize)8:
+        value = (value << 8) | (u64)bytes[at + i]
+    return value
+
+func store64(bytes: u8[], at: usize, value: u64):
+    for i in 0..<(usize)8:
+        bytes[at + i] = (u8)((value >> (u64)(56 - 8 * i)) & 0xff)
+
+## The GHASH accumulator over subkey H.
+struct Ghash:
+    var y0: u64
+    var y1: u64
+    var h0: u64
+    var h1: u64
+
+    static func start(h: const u8[]) -> Ghash:
+        return Ghash(h1 = load64(h, 0), h0 = load64(h, 8))
+
+    ## Absorb one 16-byte block: Y = (Y xor X) * H in GF(2^128).
+    mutating func block(x1: u64, x0: u64):
+        let y1 = self.y1 ^ x1
+        let y0 = self.y0 ^ x0
+        let h0 = self.h0
+        let h1 = self.h1
+        let h2 = h0 ^ h1
+        let h0r = reverse64(h0)
+        let h1r = reverse64(h1)
+        let h2r = h0r ^ h1r
+        let y0r = reverse64(y0)
+        let y1r = reverse64(y1)
+        let y2 = y0 ^ y1
+        let y2r = y0r ^ y1r
+        let z0 = bmul64(y0, h0)
+        let z1 = bmul64(y1, h1)
+        var z2 = bmul64(y2, h2)
+        var z0h = bmul64(y0r, h0r)
+        var z1h = bmul64(y1r, h1r)
+        var z2h = bmul64(y2r, h2r)
+        z2 ^= z0 ^ z1
+        z2h ^= z0h ^ z1h
+        z0h = reverse64(z0h) >> 1
+        z1h = reverse64(z1h) >> 1
+        z2h = reverse64(z2h) >> 1
+        var v0 = z0
+        var v1 = z0h ^ z2
+        var v2 = z1 ^ z2h
+        var v3 = z1h
+        v3 = (v3 << 1) | (v2 >> 63)
+        v2 = (v2 << 1) | (v1 >> 63)
+        v1 = (v1 << 1) | (v0 >> 63)
+        v0 = v0 << 1
+        v2 ^= v0 ^ (v0 >> 1) ^ (v0 >> 2) ^ (v0 >> 7)
+        v1 ^= (v0 << 63) ^ (v0 << 62) ^ (v0 << 57)
+        v3 ^= v1 ^ (v1 >> 1) ^ (v1 >> 2) ^ (v1 >> 7)
+        v2 ^= (v1 << 63) ^ (v1 << 62) ^ (v1 << 57)
+        self.y0 = v2
+        self.y1 = v3
+
+    ## Absorb data, zero-padding the final partial block.
+    mutating func absorb(data: const u8[]):
+        var at: usize = 0
+        while data.length - at >= 16:
+            self.block(load64(data, at), load64(data, at + 8))
+            at += 16
+        if at < data.length:
+            var tail: u8[16]
+            for i in 0..<data.length - at:
+                tail[i] = data[at + i]
+            self.block(load64(tail, 0), load64(tail, 8))
+            secure.wipe(tail)
+
+    ## Finish with the bit lengths of the AAD and ciphertext.
+    mutating func finish(aad_size: usize, text_size: usize, out: u8[]):
+        self.block((u64)aad_size << 3, (u64)text_size << 3)
+        store64(out, 0, self.y1)
+        store64(out, 8, self.y0)
+
+    mutating func wipe():
+        secure.wipe(u8[]((u8*)&self, sizeof(Ghash)))
+
+## Compute the tag of (aad, ciphertext) into `tag`.
+func compute_tag(key: const aes.Key*, nonce: const u8[], aad: const u8[], ciphertext: const u8[], tag: u8[]) -> !:
+    var zero: u8[16]
+    var h: u8[16]
+    defer secure.wipe(h)
+    try aes.encrypt_block(key, zero, h)
+    var ghash = Ghash.start(h)
+    defer ghash.wipe()
+    ghash.absorb(aad)
+    ghash.absorb(ciphertext)
+    var s: u8[16]
+    defer secure.wipe(s)
+    ghash.finish(aad.length, ciphertext.length, s)
+    var mask: u8[16]
+    defer secure.wipe(mask)
+    discard(try aes.ctr32(key, nonce, 1, s, mask))
+    for i in 0..<(usize)16:
+        tag[i] = mask[i]
+
+func check(key: const u8[], nonce: const u8[], aad: const u8[], text: const u8[], output: const u8[], tag: const u8[]) -> !:
+    if key.length != 16 and key.length != 24 and key.length != 32:
+        error(invalid, "AES-GCM key must be 16, 24 or 32 bytes")
+    if nonce.length != 12:
+        error(invalid, "AES-GCM nonce must be 12 bytes")
+    if output.length < text.length or tag.length < 16:
+        error(invalid, "AES-GCM output buffers are too small")
+    if text.length > 16777216 or aad.length > 16777216:
+        error(length_exceeded, "AES-GCM message exceeds 16 MiB")
+
+## Encrypt `plaintext` into `ciphertext` (which may be the same bytes) and
+## write the 16-byte tag over `aad` and the ciphertext.
+pub func seal(key: const u8[], nonce: const u8[], aad: const u8[], plaintext: const u8[], ciphertext: u8[], tag: u8[]) -> !:
+    try check(key, nonce, aad, plaintext, ciphertext, tag)
+    var schedule = try aes.expand(key)
+    defer schedule.wipe()
+    discard(try aes.ctr32(&schedule, nonce, 2, plaintext, ciphertext))
+    try compute_tag(&schedule, nonce, aad, ciphertext[..<plaintext.length], tag)
+
+## Verify the tag, then decrypt `ciphertext` into `plaintext` (which may be the
+## same bytes). On a forged tag nothing is decrypted and `forged` is raised.
+pub func open(key: const u8[], nonce: const u8[], aad: const u8[], ciphertext: const u8[], tag: const u8[], plaintext: u8[]) -> !:
+    try check(key, nonce, aad, ciphertext, plaintext, tag)
+    var schedule = try aes.expand(key)
+    defer schedule.wipe()
+    var expected: u8[16]
+    defer secure.wipe(expected)
+    try compute_tag(&schedule, nonce, aad, ciphertext, expected)
+    if not secure.equal(expected, tag[..<16]):
+        error(forged, "AES-GCM tag mismatch")
+    discard(try aes.ctr32(&schedule, nonce, 2, ciphertext, plaintext))

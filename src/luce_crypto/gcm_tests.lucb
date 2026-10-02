@@ -1,0 +1,88 @@
+## FIPS 197 Appendix C AES block vectors and all Wycheproof AES-GCM cases with
+## 96-bit nonces and 128-bit tags (valid and forged), sealed and opened both
+## out of place and in place.
+import luce_crypto.aes as aes
+import luce_crypto.gcm as gcm
+import luce_crypto.vector_file as vector_file
+
+func decode_hex(text: str, out: u8[]) -> usize:
+    var n: usize = 0
+    var i: usize = 0
+    while i < text.length:
+        out[n] = (digit(text.bytes[i]) << 4) | digit(text.bytes[i + 1])
+        n += 1
+        i += 2
+    return n
+
+func digit(c: u8) -> u8:
+    if c >= '0' and c <= '9': return c - '0'
+    return c - 'a' + 10
+
+func same(a: const u8[], b: const u8[]) -> bool:
+    if a.length != b.length: return false
+    for i in 0..<a.length:
+        if a[i] != b[i]: return false
+    return true
+
+func fips197(key_hex: str, expected_hex: str) -> !:
+    var key: u8[32]
+    let key_size = decode_hex(key_hex, key)
+    var plain: u8[16]
+    discard(decode_hex("00112233445566778899aabbccddeeff", plain))
+    var expected: u8[16]
+    discard(decode_hex(expected_hex, expected))
+    var schedule = try aes.expand(key[..<key_size])
+    defer schedule.wipe()
+    var out: u8[16]
+    try aes.encrypt_block(&schedule, plain, out)
+    assert(same(out, expected), "FIPS 197 block mismatch")
+
+## Optional argument: the vector directory (default tests/vectors).
+pub func main(arguments: str[]) -> i32!:
+    let directory = arguments[1] if arguments.length > 1 else "tests/vectors"
+    try fips197("000102030405060708090a0b0c0d0e0f", "69c4e0d86a7b0430d8cdb78070b4c55a")
+    try fips197("000102030405060708090a0b0c0d0e0f1011121314151617", "dda97ca4864cdfe06eaf70a0ec0d7191")
+    try fips197("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f", "8ea2b7ca516745bfeafc49904b496089")
+    var lines = try vector_file.Lines.open(directory, "wycheproof_aes_gcm.txt")
+    defer lines.close()
+    var key: u8[32]
+    var nonce: u8[12]
+    var aad: u8[1024]
+    var msg: u8[1024]
+    var ct: u8[1024]
+    var tag: u8[16]
+    var out: u8[1024]
+    var out_tag: u8[16]
+    var valid: usize = 0
+    var invalid: usize = 0
+    while lines.next():
+        let key_size = try lines.decode(1, key)
+        discard(try lines.decode(2, nonce))
+        let aad_size = try lines.decode(3, aad)
+        let msg_size = try lines.decode(4, msg)
+        let ct_size = try lines.decode(5, ct)
+        assert(try lines.decode(6, tag) == 16)
+        assert(msg_size == ct_size)
+        if try lines.is(0, "valid"):
+            try gcm.seal(key[..<key_size], nonce, aad[..<aad_size], msg[..<msg_size], out, out_tag)
+            assert(same(out[..<msg_size], ct[..<ct_size]) and same(out_tag, tag), "GCM seal mismatch")
+            try gcm.open(key[..<key_size], nonce, aad[..<aad_size], ct[..<ct_size], tag, out)
+            assert(same(out[..<msg_size], msg[..<msg_size]), "GCM open mismatch")
+            # In place: seal over the message bytes, then open them back.
+            for i in 0..<msg_size: out[i] = msg[i]
+            try gcm.seal(key[..<key_size], nonce, aad[..<aad_size], out[..<msg_size], out[..<msg_size], out_tag)
+            assert(same(out[..<msg_size], ct[..<ct_size]), "GCM in-place seal mismatch")
+            try gcm.open(key[..<key_size], nonce, aad[..<aad_size], out[..<msg_size], out_tag, out[..<msg_size])
+            assert(same(out[..<msg_size], msg[..<msg_size]), "GCM in-place open mismatch")
+            valid += 1
+        else:
+            var rejected = false
+            gcm.open(key[..<key_size], nonce, aad[..<aad_size], ct[..<ct_size], tag, out) catch failure:
+                assert(failure.code == gcm.forged)
+                rejected = true
+                recover ()
+            assert(rejected, "forged GCM case was accepted")
+            invalid += 1
+    assert(valid > 100 and invalid > 30)
+    print(f"PASS AES FIPS 197 and Wycheproof AES-GCM ({valid} valid, {invalid} forged)")
+    return 0

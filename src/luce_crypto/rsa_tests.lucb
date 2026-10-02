@@ -1,0 +1,57 @@
+## Wycheproof RSASSA-PKCS1-v1_5 and RSASSA-PSS verification vectors for 2048-,
+## 3072- and 4096-bit keys: every valid signature verifies and every invalid
+## one is rejected (false or a key/input error).
+import luce_crypto.rsa as rsa
+import luce_crypto.sha2 as sha2
+import luce_crypto.vector_file as vector_file
+
+struct Counts:
+    var valid: usize
+    var invalid: usize
+
+func run_file(directory: str, name: str, algorithm: str, pss: bool, salt: usize, counts: Counts*) -> !:
+    var lines = try vector_file.Lines.open(directory, name)
+    defer lines.close()
+    var modulus: u8[1024]
+    var exponent: u8[16]
+    var message: u8[4096]
+    var signature: u8[1100]
+    var digest: u8[64]
+    var key = rsa.PublicKey()
+    var have_key = false
+    while lines.next():
+        if try lines.is(0, "key"):
+            let n = try lines.decode(1, modulus)
+            let e = try lines.decode(2, exponent)
+            key = try rsa.public_key(modulus[..<n], exponent[..<e])
+            have_key = true
+            continue
+        assert(have_key)
+        let m = try lines.decode(1, message)
+        let s = try lines.decode(2, signature)
+        let size = try sha2.digest(message[..<m], digest, algorithm)
+        var accepted = false
+        if pss:
+            accepted = rsa.verify_pss(&key, algorithm, digest[..<size], signature[..<s], salt) catch: recover false
+        else:
+            accepted = rsa.verify_pkcs1(&key, algorithm, digest[..<size], signature[..<s]) catch: recover false
+        if try lines.is(0, "valid"):
+            assert(accepted, "valid RSA signature rejected")
+            counts.valid += 1
+        else:
+            assert(not accepted, "invalid RSA signature accepted")
+            counts.invalid += 1
+
+## Optional argument: the vector directory (default tests/vectors).
+pub func main(arguments: str[]) -> i32!:
+    let directory = arguments[1] if arguments.length > 1 else "tests/vectors"
+    var counts = Counts()
+    try run_file(directory, "wycheproof_rsa_pkcs1_2048_sha256.txt", "sha256", false, 0, &counts)
+    try run_file(directory, "wycheproof_rsa_pkcs1_3072_sha384.txt", "sha384", false, 0, &counts)
+    try run_file(directory, "wycheproof_rsa_pkcs1_4096_sha512.txt", "sha512", false, 0, &counts)
+    try run_file(directory, "wycheproof_rsa_pss_2048_sha256.txt", "sha256", true, 32, &counts)
+    try run_file(directory, "wycheproof_rsa_pss_3072_sha256.txt", "sha256", true, 32, &counts)
+    try run_file(directory, "wycheproof_rsa_pss_4096_sha512.txt", "sha512", true, 64, &counts)
+    assert(counts.valid > 100 and counts.invalid > 500)
+    print(f"PASS Wycheproof RSA PKCS#1 v1.5 and PSS ({counts.valid} valid, {counts.invalid} invalid)")
+    return 0

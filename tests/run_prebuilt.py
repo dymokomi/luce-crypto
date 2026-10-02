@@ -14,6 +14,11 @@ def check_all(binaries):
         result = checked([binaries / name])
         assert result.stdout.startswith(b"PASS "), result.stdout
         print(result.stdout.decode(), end="", flush=True)
+    vectors = Path(__file__).resolve().parents[1] / "tests/vectors"
+    for name in ("gcm-tests", "rsa-tests", "ecdsa-tests"):
+        result = checked([binaries / name, vectors], timeout=300)
+        assert result.stdout.startswith(b"PASS "), result.stdout
+        print(result.stdout.decode(), end="", flush=True)
     check(binaries / "driver")
     check_files(binaries / "file-driver")
     check_keyed(binaries / "keyed-driver")

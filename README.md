@@ -53,9 +53,19 @@ The pinned native compiler ignores `noinline`; the package does not treat it as 
 security barrier. Functional tests and retained assembly are not independent
 security/side-channel review. Experimental ChaCha20-Poly1305 / XChaCha20-Poly1305, FIPS 202 SHAKE128/256,
 FIPS 204 ML-DSA-65, SHA-1 (Git object IDs only), ECDSA P-256
-(verify, sign, keygen), and public-data ECDSA P-384 verification are implemented.
-P-384 accepts exact-width SHA-384 digests for certificate-chain validation; it
-is not a secret-scalar or constant-time implementation. Argon2id
+(verify, sign, keygen, ECDH), and public-data ECDSA P-384 verification are implemented.
+P-384 accepts SHA-256/384 digests (longer ones are truncated) for certificate-chain
+validation; it is not a secret-scalar or constant-time implementation. P-256
+scalar multiplication (keygen, sign, ECDH) is variable-time double-and-add; use
+it for fresh ephemeral keys, not long-term secrets exposed to timing attacks.
+
+AES-128/192/256 and AES-GCM (`aes_gcm_seal`/`aes_gcm_open`: 12-byte nonce,
+16-byte tag) are bitsliced after BearSSL's `aes_ct64` and `ghash_ctmul64`
+designs: no secret-indexed tables and no secret-dependent branches in the Luce
+source. Whether the compiled code is constant-time on every backend has not
+been audited. RSA is verification only (`rsa_verify_pkcs1`, `rsa_verify_pss`
+with MGF1; SHA-256/384/512; 2048–8192-bit moduli) on public data with
+variable-time Montgomery arithmetic; there is no RSA signing or decryption. Argon2id
 cost calibration, hardened custody, side-channel review and TLS remain required
 infrastructure work. No production keys or credentials are created.
 See [keyed APIs and memory limits](docs/KEYED.md).
@@ -78,7 +88,9 @@ python3 tools/codegen_probe.py
 
 Or supply `--base /path/to/luce-base --luce /path/to/luce` to `tests/run.py`.
 The runner builds and executes dedicated X25519, P-256 and P-384 vector programs in
-all six modes; these programs are also included in sanitizer and prebuilt-bundle
+all six modes, plus Wycheproof AES-GCM, RSA PKCS#1 v1.5/PSS and ECDSA P-384
+(SHA-256/384) vector programs over `tests/vectors/wycheproof_*.txt` (converted
+by `tools/wycheproof.py`); these programs are also included in sanitizer and prebuilt-bundle
 checks. They cover RFC 7748 scalar multiplication/Diffie–Hellman, RFC 6979
 verification/public-key derivation, and P-256 signing/tampering. They are not a
 side-channel audit. Compiler caches default to `build/cache` (`LUCE_CACHE` can

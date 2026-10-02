@@ -6,12 +6,14 @@ import luce_crypto.secret as secret
 import luce_crypto.secure as secure
 import luce_crypto.argon2id as password_kdf
 import luce_crypto.aead as aead
+import luce_crypto.gcm as gcm
 import luce_crypto.sha1 as sha1
 import luce_crypto.shake as shake
 import luce_crypto.mldsa as mldsa
 import luce_crypto.x25519 as curve
 import luce_crypto.p256 as p256
 import luce_crypto.p384 as p384
+import luce_crypto.rsa as rsa
 
 pub type Hash = sha2.Hash
 pub type Hmac = mac.Hmac
@@ -64,6 +66,15 @@ pub func aead_seal(key: const u8[], nonce: const u8[], aad: const u8[], plaintex
 pub func aead_open(key: const u8[], nonce: const u8[], aad: const u8[], ciphertext: const u8[], tag: const u8[], plaintext: u8[]) -> !:
     try aead.open(key, nonce, aad, ciphertext, tag, plaintext)
 
+## AES-GCM (SP 800-38D) with a 16-, 24- or 32-byte key, a 12-byte nonce and a
+## 16-byte tag. Output may be the same bytes as input. Constant-time bitsliced AES.
+pub func aes_gcm_seal(key: const u8[], nonce: const u8[], aad: const u8[], plaintext: const u8[], ciphertext: u8[], tag: u8[]) -> !:
+    try gcm.seal(key, nonce, aad, plaintext, ciphertext, tag)
+
+## Verify the tag first; a forged message fails with `forged` and is not decrypted.
+pub func aes_gcm_open(key: const u8[], nonce: const u8[], aad: const u8[], ciphertext: const u8[], tag: const u8[], plaintext: u8[]) -> !:
+    try gcm.open(key, nonce, aad, ciphertext, tag, plaintext)
+
 pub func sha1_digest(input: const u8[], output: u8[]) -> usize!:
     return try sha1.digest(input, output)
 
@@ -99,13 +110,29 @@ pub func ecdsa_p256_public(d: const u8[], qx: u8[], qy: u8[]) -> !:
 pub func ecdsa_p256_keygen(d: u8[], qx: u8[], qy: u8[]) -> !:
     try p256.keygen(d, qx, qy)
 
+## P-256 ECDH: the 32-byte x-coordinate of d·Q for a validated peer point.
+pub func ecdh_p256(d: const u8[], qx: const u8[], qy: const u8[], shared: u8[]) -> !:
+    try p256.ecdh(d, qx, qy, shared)
+
 pub func ecdsa_p256_sign(d: const u8[], message: const u8[], r: u8[], s: u8[]) -> !:
     try p256.sign(d, message, r, s)
 
-## Verify ECDSA P-384 over a 48-byte digest. All five inputs are exact-width,
-## big-endian values.
+## Verify ECDSA P-384 over a digest (SHA-256/384 as is, longer ones truncated
+## to 384 bits). Coordinates and r, s are exact 48-byte big-endian values.
 pub func ecdsa_p384_verify(qx: const u8[], qy: const u8[], message: const u8[], r: const u8[], s: const u8[]) -> bool!:
     return try p384.verify(qx, qy, message, r, s)
+
+## RSASSA-PKCS1-v1_5 verification of a sha256/sha384/sha512 digest `hashed` under the
+## big-endian `modulus` (2048–8192 bits) and `exponent`.
+pub func rsa_verify_pkcs1(modulus: const u8[], exponent: const u8[], algorithm: str, hashed: const u8[], signature: const u8[]) -> bool!:
+    let key = try rsa.public_key(modulus, exponent)
+    return try rsa.verify_pkcs1(&key, algorithm, hashed, signature)
+
+## RSASSA-PSS verification with MGF1 over the same hash and a salt of exactly
+## `salt_size` bytes (TLS 1.3 uses the digest length).
+pub func rsa_verify_pss(modulus: const u8[], exponent: const u8[], algorithm: str, hashed: const u8[], signature: const u8[], salt_size: usize) -> bool!:
+    let key = try rsa.public_key(modulus, exponent)
+    return try rsa.verify_pss(&key, algorithm, hashed, signature, salt_size)
 
 pub func wipe(data: u8[]):
     secure.wipe(data)

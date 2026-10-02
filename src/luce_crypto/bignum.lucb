@@ -1,0 +1,167 @@
+## Fixed-capacity unsigned integers for RSA public-key operations: big-endian
+## byte conversion, comparison and Montgomery modular exponentiation (CIOS)
+## modulo an odd modulus of up to 8192 bits. Everything here handles public
+## values (moduli, exponents, signatures), so loops and branches may depend on
+## the data; this is not a constant-time private-key implementation.
+import luce_crypto.sha2 as sha2
+
+## The largest supported operand, in 32-bit limbs (8192 bits).
+pub let max_limbs: usize = 256
+
+## A natural number in little-endian 32-bit limbs; `size` limbs are in use.
+pub struct Natural:
+    var limbs: u32[256]
+    var size: usize
+
+    ## The number with big-endian bytes `bytes`, using exactly enough limbs
+    ## for that many bytes (leading zero bytes still count toward `size`).
+    pub static func from_bytes(bytes: const u8[]) -> Natural!:
+        if bytes.length == 0 or bytes.length > max_limbs * 4:
+            error(sha2.invalid, "integer must be 1 to 1024 bytes")
+        var value = Natural(size = (bytes.length + 3) // 4)
+        for i in 0..<bytes.length:
+            let position = bytes.length - 1 - i
+            value.limbs[i // 4] |= (u32)bytes[position] << (u32)(8 * (i % 4))
+        return value
+
+    ## Write the value as exactly `out.length` big-endian bytes; fails when it
+    ## does not fit.
+    pub func to_bytes(out: u8[]) -> !:
+        for i in 0..<out.length:
+            out[i] = 0
+        for i in 0..<self.size * 4:
+            let byte = (u8)((self.limbs[i // 4] >> (u32)(8 * (i % 4))) & 0xff)
+            if i >= out.length:
+                if byte != 0:
+                    error(sha2.invalid, "integer does not fit the output")
+            else:
+                out[out.length - 1 - i] = byte
+
+    ## The number of significant bits.
+    pub func bit_length() -> usize:
+        var i = self.size
+        while i > 0:
+            let limb = self.limbs[i - 1]
+            if limb != 0:
+                var bits: usize = 32
+                while (limb >> (u32)(bits - 1)) == 0:
+                    bits -= 1
+                return (i - 1) * 32 + bits
+            i -= 1
+        return 0
+
+    ## Whether the value is zero.
+    pub func is_zero() -> bool:
+        return self.bit_length() == 0
+
+## -1, 0 or 1 as a < b, a == b, a > b, over the larger of the two sizes.
+pub func compare(a: const Natural*, b: const Natural*) -> i32:
+    var i = a.size if a.size > b.size else b.size
+    while i > 0:
+        let x = a.limbs[i - 1] if i <= a.size else 0
+        let y = b.limbs[i - 1] if i <= b.size else 0
+        if x != y:
+            return 1 if x > y else -1
+        i -= 1
+    return 0
+
+## Montgomery arithmetic modulo an odd `modulus` with R = 2^(32·size).
+struct Montgomery:
+    var modulus: Natural
+    var n0: u32
+    var r2: Natural
+
+    ## Precompute -n^-1 mod 2^32 and R^2 mod n.
+    static func create(modulus: const Natural*) -> Montgomery!:
+        if (modulus.limbs[0] & 1) == 0 or modulus.bit_length() < 2:
+            error(sha2.invalid, "Montgomery modulus must be odd and greater than one")
+        var context = Montgomery(modulus = *modulus)
+        context.modulus.size = (modulus.bit_length() + 31) // 32
+        # Newton iteration for the inverse of n modulo 2^32.
+        let n = modulus.limbs[0]
+        var inverse: u32 = 1
+        for _ in 0..<(usize)5:
+            inverse = inverse *% (2 -% n *% inverse)
+        context.n0 = 0 -% inverse
+        # R^2 mod n by doubling 1 a total of 2·32·size times.
+        let size = context.modulus.size
+        var value = Natural(size = size)
+        value.limbs[0] = 1
+        for _ in 0..<2 * 32 * size:
+            var carry: u32 = 0
+            for j in 0..<size:
+                let next = value.limbs[j] >> 31
+                value.limbs[j] = (value.limbs[j] << 1) | carry
+                carry = next
+            if carry != 0 or compare(&value, &context.modulus) >= 0:
+                subtract(&value, &context.modulus)
+        context.r2 = value
+        return context
+
+    ## out = a·b·R^-1 mod n for a, b < n (CIOS).
+    func multiply(out: Natural*, a: const Natural*, b: const Natural*):
+        let size = self.modulus.size
+        var t: u32[258]
+        for i in 0..<size:
+            var carry: u64 = 0
+            let bi = (u64)b.limbs[i]
+            for j in 0..<size:
+                let sum = (u64)t[j] + (u64)a.limbs[j] * bi + carry
+                t[j] = (u32)(sum & 0xffffffff)
+                carry = sum >> 32
+            var sum = (u64)t[size] + carry
+            t[size] = (u32)(sum & 0xffffffff)
+            t[size + 1] = (u32)(sum >> 32)
+            let m = (u64)(t[0] *% self.n0)
+            sum = (u64)t[0] + m * (u64)self.modulus.limbs[0]
+            carry = sum >> 32
+            for j in 1..<size:
+                sum = (u64)t[j] + m * (u64)self.modulus.limbs[j] + carry
+                t[j - 1] = (u32)(sum & 0xffffffff)
+                carry = sum >> 32
+            sum = (u64)t[size] + carry
+            t[size - 1] = (u32)(sum & 0xffffffff)
+            t[size] = t[size + 1] + (u32)(sum >> 32)
+        var result = Natural(size = size)
+        for i in 0..<size:
+            result.limbs[i] = t[i]
+        if t[size] != 0 or compare(&result, &self.modulus) >= 0:
+            subtract(&result, &self.modulus)
+        *out = result
+
+## a -= b, assuming a >= b (or that the borrow cancels a carry out of `a`).
+func subtract(a: Natural*, b: const Natural*):
+    var borrow: u64 = 0
+    for i in 0..<a.size:
+        let x = (u64)a.limbs[i]
+        let y = (u64)(b.limbs[i] if i < b.size else 0) + borrow
+        if x >= y:
+            a.limbs[i] = (u32)(x - y)
+            borrow = 0
+        else:
+            a.limbs[i] = (u32)(x + 0x100000000 - y)
+            borrow = 1
+
+## base^exponent mod modulus for a public big-endian `exponent`. `base` must
+## be below the odd modulus. The result has the modulus's limb count.
+pub func modular_power(base: const Natural*, exponent: const u8[], modulus: const Natural*) -> Natural!:
+    let context = try Montgomery.create(modulus)
+    if compare(base, &context.modulus) >= 0:
+        error(sha2.invalid, "base must be below the modulus")
+    var reduced = *base
+    reduced.size = context.modulus.size
+    var power = Natural(size = context.modulus.size)
+    context.multiply(&power, &reduced, &context.r2)
+    var one = Natural(size = context.modulus.size)
+    one.limbs[0] = 1
+    var result = Natural()
+    context.multiply(&result, &one, &context.r2)
+    for i in 0..<exponent.length:
+        var bit: i32 = 7
+        while bit >= 0:
+            context.multiply(&result, &result, &result)
+            if ((exponent[i] >> (u8)bit) & 1) != 0:
+                context.multiply(&result, &result, &power)
+            bit -= 1
+    context.multiply(&result, &result, &one)
+    return result

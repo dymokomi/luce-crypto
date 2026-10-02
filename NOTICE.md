@@ -56,3 +56,20 @@ known-answer checks use Python hashlib for SHAKE and OpenSSL 3.6 ML-DSA-65
 No OpenSSL, liboqs or pqcrystals object is linked into production builds.
 NTT zeta constants match the public Dilithium reference table for q=8380417;
 they are field elements specified by FIPS 204, not copied engine source.
+
+AES (FIPS 197) and AES-GCM (NIST SP 800-38D) are original Luce code whose
+bitsliced structure follows Thomas Pornin's BearSSL (MIT license,
+https://www.bearssl.org/): `aes_ct64.c`/`aes_ct64_enc.c` (orthogonalization,
+round functions and key schedule) and `ghash_ctmul64.c` (carry-less multiply
+with holes). The S-box is the Boyar–Peralta circuit,
+https://eprint.iacr.org/2009/191. No BearSSL source is included.
+BearSSL copyright notice: Copyright (c) 2016 Thomas Pornin <pornin@bolet.org>,
+permission granted under the MIT license.
+
+RSA verification follows RFC 8017 (§8.1.2, §8.2.2, §9.1.2, §9.2, §B.2.1); the
+Montgomery multiplication is the CIOS method (Koç, Acar, Kaliski 1996).
+
+`tests/vectors/wycheproof_*.txt` are converted by `tools/wycheproof.py` from
+Project Wycheproof test vectors (https://github.com/C2SP/wycheproof, revision
+3fa63dd0344abb611f1fb1d77e119938603ea230, Apache-2.0), dropping cases marked
+"acceptable" and AES-GCM nonce sizes other than 96 bits. They are test data only.

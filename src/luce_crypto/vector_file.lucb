@@ -1,0 +1,88 @@
+## Test support: reads the line-oriented vector files under tests/vectors/
+## (written by tools/wycheproof.py). A line is space-separated fields; "-" is
+## an empty field. Not exported by the package.
+import c
+import files
+import luce_crypto.sha2 as sha2
+
+## A whole vector file and a cursor over its lines and fields.
+pub struct Lines:
+    var text: u8[]
+    var line_start: usize
+    var line_end: usize
+    var next_start: usize
+
+    ## Load `directory`/`name`.
+    pub static func open(directory: str, name: str) -> Lines!:
+        var path: u8[1024]
+        if directory.length + name.length + 2 > path.length:
+            error(sha2.invalid, "vector path is too long")
+        for i in 0..<directory.length:
+            path[i] = directory.bytes[i]
+        path[directory.length] = '/'
+        for i in 0..<name.length:
+            path[directory.length + 1 + i] = name.bytes[i]
+        let size = directory.length + 1 + name.length
+        path[size] = 0
+        return Lines(text = try files.read((c.str)(str)path[..<size]))
+
+    ## Release the file contents.
+    pub mutating func close():
+        if self.text.length > 0:
+            free(self.text)
+        self.text = self.text[..<0]
+
+    ## Advance to the next nonempty line; false at the end of the file.
+    pub mutating func next() -> bool:
+        while self.next_start < self.text.length:
+            self.line_start = self.next_start
+            var end = self.line_start
+            while end < self.text.length and self.text[end] != '\n':
+                end += 1
+            self.line_end = end
+            self.next_start = end + 1
+            if end > self.line_start:
+                return true
+        return false
+
+    ## The raw text of field `index` (0-based) on the current line.
+    pub func field(index: usize) -> const u8[]!:
+        var at = self.line_start
+        var current: usize = 0
+        while at < self.line_end:
+            var end = at
+            while end < self.line_end and self.text[end] != ' ':
+                end += 1
+            if current == index:
+                let value = self.text[at..<end]
+                if value.length == 1 and value[0] == '-':
+                    return value[..<0]
+                return value
+            current += 1
+            at = end + 1
+        error(sha2.invalid, "vector line has too few fields")
+
+    ## Whether field `index` equals `word`.
+    pub func is(index: usize, word: str) -> bool!:
+        let value = try self.field(index)
+        if value.length != word.length:
+            return false
+        for i in 0..<value.length:
+            if value[i] != word.bytes[i]:
+                return false
+        return true
+
+    ## Decode hex field `index` into `out`; returns the byte count.
+    pub func decode(index: usize, out: u8[]) -> usize!:
+        let value = try self.field(index)
+        if value.length % 2 != 0 or value.length // 2 > out.length:
+            error(sha2.invalid, "vector hex field has an odd length or is too long")
+        for i in 0..<value.length // 2:
+            out[i] = (try nibble(value[2 * i]) << 4) | try nibble(value[2 * i + 1])
+        return value.length // 2
+
+func nibble(digit: u8) -> u8!:
+    if digit >= '0' and digit <= '9': return digit - '0'
+    if digit >= 'a' and digit <= 'f': return digit - 'a' + 10
+    if digit >= 'A' and digit <= 'F': return digit - 'A' + 10
+    error(sha2.invalid, "vector field is not hex")

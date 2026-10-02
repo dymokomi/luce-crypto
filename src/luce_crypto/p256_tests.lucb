@@ -1,5 +1,5 @@
 ## Curve regression vectors, built and executed in every backend.
-from luce_crypto.p256 import verify, public_from_private, keygen, sign
+from luce_crypto.p256 import verify, public_from_private, keygen, sign, ecdh
 
 func verify_rfc6979() -> !:
     let qx = b"\x60\xfe\xd4\xba\x25\x5a\x9d\x31\xc9\x61\xeb\x74\xc6\x35\x6d\x68\xc0\x49\xb8\x92\x3b\x61\xfa\x6c\xe6\x69\x62\x2e\x60\xf2\x9f\xb6"
@@ -36,10 +36,42 @@ func signing_roundtrip() -> !:
     s[31] = s[31] ^ 1
     assert(not (try verify(qx, qy, e, r, s)))
 
+## Wycheproof ecdh_secp256r1_ecpoint case 1, a key agreement round trip and
+## rejection of a point that is not on the curve.
+func ecdh_cases() -> !:
+    let qx = b"\x62\xd5\xbd\x33\x72\xaf\x75\xfe\x85\xa0\x40\x71\x5d\x0f\x50\x24\x28\xe0\x70\x46\x86\x8b\x0b\xfd\xfa\x61\xd7\x31\xaf\xe4\x4f\x26"
+    let qy = b"\xac\x33\x3a\x93\xa9\xe7\x0a\x81\xcd\x5a\x95\xb5\xbf\x8d\x13\x99\x0e\xb7\x41\xc8\xc3\x88\x72\xb4\xa0\x7d\x27\x5a\x01\x4e\x30\xcf"
+    let d = b"\x06\x12\x46\x5c\x89\xa0\x23\xab\x17\x85\x5b\x0a\x6b\xce\xbf\xd3\xfe\xbb\x53\xae\xf8\x41\x38\x64\x7b\x53\x52\xe0\x2c\x10\xc3\x46"
+    let expected = b"\x53\x02\x0d\x90\x8b\x02\x19\x32\x8b\x65\x8b\x52\x5f\x26\x78\x0e\x3a\xe1\x2b\xcd\x95\x2b\xb2\x5a\x93\xbc\x08\x95\xe1\x71\x42\x85"
+    var shared: u8[32]
+    try ecdh(d, qx, qy, shared)
+    for i in 0..<32: assert(shared[i] == expected[i], "P-256 ECDH vector mismatch")
+    var d1: u8[32]
+    var x1: u8[32]
+    var y1: u8[32]
+    var d2: u8[32]
+    var x2: u8[32]
+    var y2: u8[32]
+    try keygen(d1, x1, y1)
+    try keygen(d2, x2, y2)
+    var s1: u8[32]
+    var s2: u8[32]
+    try ecdh(d1, x2, y2, s1)
+    try ecdh(d2, x1, y1, s2)
+    for i in 0..<32: assert(s1[i] == s2[i], "P-256 ECDH disagreement")
+    y2[31] ^= 1
+    var rejected = false
+    ecdh(d1, x2, y2, s1) catch failure:
+        discard(failure)
+        rejected = true
+        recover ()
+    assert(rejected, "off-curve ECDH peer accepted")
+
 pub func main(arguments: str[]) -> i32!:
     discard(arguments)
     try verify_rfc6979()
     try derive_rfc6979()
     try signing_roundtrip()
-    print("PASS p256 3 curve regression cases")
+    try ecdh_cases()
+    print("PASS p256 4 curve regression cases")
     return 0

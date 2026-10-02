@@ -511,3 +511,30 @@ pub func sign(d_bytes: const u8[], digest: const u8[], r_bytes: u8[], s_bytes: u
         bn_to_bytes(s_bytes, s)
         return
     error(sha2.invalid, "could not form an ECDSA-P256 signature")
+
+## ECDH over P-256 (SEC 1 §3.3.1): the 32-byte big-endian x-coordinate of
+## d·Q. The peer point (qx, qy) must be a valid point on the curve. This uses
+## the same variable-time scalar multiplication as signing; it suits a fresh
+## ephemeral key per exchange, not a long-term secret under timing attack.
+pub func ecdh(d_bytes: const u8[], qx: const u8[], qy: const u8[], shared: u8[]) -> !:
+    if d_bytes.length != 32 or qx.length != 32 or qy.length != 32 or shared.length < 32:
+        error(sha2.invalid, "P-256 ECDH inputs must be 32 bytes each")
+    var d: u32[8]
+    bytes_to_bn(d, d_bytes)
+    if bn_is_zero(d) or bn_cmp(d, n_mod) >= 0:
+        error(sha2.invalid, "P-256 ECDH private key is out of range")
+    var x: u32[8]
+    var y: u32[8]
+    bytes_to_bn(x, qx)
+    bytes_to_bn(y, qy)
+    if bn_cmp(x, p_mod) >= 0 or bn_cmp(y, p_mod) >= 0 or not on_curve(x, y):
+        error(sha2.invalid, "P-256 ECDH peer key is not a curve point")
+    var peer: Point
+    load_point(&peer, qx, qy)
+    var product: Point
+    scalar_mul(&product, d, &peer)
+    if is_infinity(&product):
+        error(sha2.invalid, "P-256 ECDH produced the point at infinity")
+    var xa: u32[8]
+    affine_x(xa, &product)
+    bn_to_bytes(shared, xa)
