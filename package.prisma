@@ -4,7 +4,7 @@ def package "luce-crypto" {
     str version = "0.1.4"
     str kind = "package"
     str language = "luce-base"
-    str description = "Native Luce Base cryptography with an owning Luce API. MIT OR Apache-2.0. Provides SHA-2, HMAC, HKDF, Argon2id, ChaCha20-Poly1305, AES-GCM, X25519, ECDSA/ECDH P-256, ECDSA P-384 verification, RSA PKCS#1 v1.5/PSS verification, ML-DSA-65 and experimental owned secret buffers."
+    str description = "Native Luce Base cryptography: SHA-2, HMAC, HKDF, Argon2id, ChaCha20-Poly1305, AES-GCM, X25519, P-256 ECDSA/ECDH, P-384 and RSA (PKCS#1, PSS) verification, ML-DSA-65. MIT OR Apache-2.0."
     str readme = "README.md"
 
     def export "crypto" {
