@@ -1,6 +1,6 @@
 ## Test-only length-delimited vectors supplied by NIST/Python, no crypto FFI.
-import crypto_native as sha2
-import files
+import native as sha2
+import luce_std.files
 import memory
 import c
 

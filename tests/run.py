@@ -10,25 +10,25 @@ from run_prebuilt import check_all
 ROOT = Path(__file__).resolve().parents[1]
 MODES = {f"native{i}": ["--native", "--opt", str(i)] for i in range(4)}
 MODES.update({"c": ["--backend=c"], "c-release": ["--backend=c", "--release"]})
-SOURCES = [("src/luce_crypto/x25519_tests.lucb", "x25519"), ("src/luce_crypto/p256_tests.lucb", "p256"), ("src/luce_crypto/p384_tests.lucb", "p384"), ("src/luce_crypto/native_tests.lucb", "native"), ("tests/driver.lucb", "driver"), ("tests/file_driver.lucb", "file-driver")]
-SOURCES += [("src/luce_crypto/keyed_tests.lucb", "keyed-native"),
-            ("src/luce_crypto/keyed_failure_tests.lucb", "keyed-failures"),
+SOURCES = [("src/x25519_tests.lucb", "x25519"), ("src/p256_tests.lucb", "p256"), ("src/p384_tests.lucb", "p384"), ("src/native_tests.lucb", "native"), ("tests/driver.lucb", "driver"), ("tests/file_driver.lucb", "file-driver")]
+SOURCES += [("src/keyed_tests.lucb", "keyed-native"),
+            ("src/keyed_failure_tests.lucb", "keyed-failures"),
             ("tests/keyed_driver.lucb", "keyed-driver"),
-            ("src/luce_crypto/memory_probe.lucb", "memory-probe")]
-SOURCES += [("src/luce_crypto/blake2b_tests.lucb", "blake-driver"),
-            ("src/luce_crypto/argon2_tests.lucb", "argon-driver"),
-            ("src/luce_crypto/argon2_failure_tests.lucb", "argon-failures"),
-            ("src/luce_crypto/aead_tests.lucb", "aead-tests"),
-            ("src/luce_crypto/hash_kat_tests.lucb", "hash-kat"),
-            ("src/luce_crypto/gcm_tests.lucb", "gcm-tests"),
-            ("src/luce_crypto/chacha_kat_tests.lucb", "chacha-kat"),
-            ("src/luce_crypto/x25519_kat_tests.lucb", "x25519-kat"),
-            ("src/luce_crypto/rsa_kat_tests.lucb", "rsa-kat"),
-            ("src/luce_crypto/ecdsa_kat_tests.lucb", "ecdsa-kat"),
-            ("src/luce_crypto/ec_kat_tests.lucb", "ec-kat"),
-            ("src/luce_crypto/shake_tests.lucb", "shake-tests"),
-            ("src/luce_crypto/mldsa_tests.lucb", "mldsa-tests"),
-            ("src/luce_crypto/mldsa_interop.lucb", "mldsa-interop")]
+            ("src/memory_probe.lucb", "memory-probe")]
+SOURCES += [("src/blake2b_tests.lucb", "blake-driver"),
+            ("src/argon2_tests.lucb", "argon-driver"),
+            ("src/argon2_failure_tests.lucb", "argon-failures"),
+            ("src/aead_tests.lucb", "aead-tests"),
+            ("src/hash_kat_tests.lucb", "hash-kat"),
+            ("src/gcm_tests.lucb", "gcm-tests"),
+            ("src/chacha_kat_tests.lucb", "chacha-kat"),
+            ("src/x25519_kat_tests.lucb", "x25519-kat"),
+            ("src/rsa_kat_tests.lucb", "rsa-kat"),
+            ("src/ecdsa_kat_tests.lucb", "ecdsa-kat"),
+            ("src/ec_kat_tests.lucb", "ec-kat"),
+            ("src/shake_tests.lucb", "shake-tests"),
+            ("src/mldsa_tests.lucb", "mldsa-tests"),
+            ("src/mldsa_interop.lucb", "mldsa-interop")]
 
 
 def main():

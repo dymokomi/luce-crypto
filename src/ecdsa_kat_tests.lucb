@@ -1,0 +1,234 @@
+## ECDSA over P-256 and P-384: BearSSL's RFC 6979 known answers (verify, raw
+## and DER, with a flipped digest bit, and deterministic P-256 signing), the
+## complete Wycheproof ecdsa_secp256r1_sha256/sha512 and
+## ecdsa_secp384r1_sha256/sha384/sha512 files in DER and IEEE P1363 form, the
+## NIST CAVP SigVer cases for both curves, and OpenSSL's ECDSA stanzas.
+## P-521, other curves and SHA-1 signing are counted as out of scope.
+import p256
+import p384
+import sha1
+import sha2
+import vector_file
+
+func same(a: const u8[], b: const u8[]) -> bool:
+    if a.length != b.length: return false
+    for i in 0..<a.length:
+        if a[i] != b[i]: return false
+    return true
+
+## The digest of `message` under a vector's hash name; zero when unsupported.
+func message_digest(name: const u8[], message: const u8[], out: u8[]) -> usize!:
+    if same(name, b"sha1"):
+        return try sha1.digest(message, out)
+    for candidate in ["sha224", "sha256", "sha384", "sha512"]:
+        if same(name, candidate.bytes):
+            return try sha2.digest(message, out, candidate)
+    return 0
+
+func check(wide: bool, x: const u8[], y: const u8[], digest: const u8[], r: const u8[], s: const u8[]) -> bool:
+    if wide:
+        return p384.verify(x, y, digest, r, s) catch: recover false
+    return p256.verify(x, y, digest, r, s) catch: recover false
+
+## Verify a DER or raw (r || s) signature; malformed encodings are rejections.
+func check_encoded(wide: bool, raw: bool, x: const u8[], y: const u8[], digest: const u8[], signature: const u8[]) -> bool:
+    let w: usize = 48 if wide else 32
+    var r: u8[48]
+    var s: u8[48]
+    if raw:
+        if signature.length != 2 * w:
+            return false
+        for i in 0..<w:
+            r[i] = signature[i]
+            s[i] = signature[w + i]
+    elif not vector_file.ecdsa_from_der(signature, r[..<w], s[..<w]):
+        return false
+    return check(wide, x, y, digest, r[..<w], s[..<w])
+
+struct Counts:
+    var passed: usize
+    var rejected: usize
+    var out_of_scope: usize
+
+func bearssl(directory: str, counts: Counts*) -> !:
+    var lines = try vector_file.Lines.open(directory, "bearssl/ecdsa.txt")
+    defer lines.close()
+    var keys: u8[3 * 199]
+    while lines.next():
+        if try lines.is(0, "key"):
+            let slot: usize = 0 if try lines.is(1, "p256") else (1 if try lines.is(1, "p384") else 2)
+            discard(try lines.decode(2, keys[slot * 199..<slot * 199 + 133]))
+            discard(try lines.decode(3, keys[slot * 199 + 133..<slot * 199 + 199]))
+            continue
+        if try lines.is(0, "p521"):
+            counts.out_of_scope += 1
+            continue
+        let wide = try lines.is(0, "p384")
+        let w: usize = 48 if wide else 32
+        let base: usize = 199 if wide else 0
+        let x = keys[base + 1..<base + 1 + w]
+        let y = keys[base + 1 + w..<base + 1 + 2 * w]
+        var message: u8[16]
+        var digest: u8[64]
+        var raw: u8[96]
+        var der: u8[110]
+        let m = try lines.decode(2, message)
+        let n = try message_digest(try lines.field(1), message[..<m], digest)
+        let raw_size = try lines.decode(4, raw)
+        let der_size = try lines.decode(5, der)
+        for encoded in [false, true]:
+            let signature = der[..<der_size] if encoded else raw[..<raw_size]
+            assert(check_encoded(wide, not encoded, x, y, digest[..<n], signature), "BearSSL ECDSA KAT rejected")
+            digest[0] ^= 0x80
+            assert(not check_encoded(wide, not encoded, x, y, digest[..<n], signature), "ECDSA accepted a changed digest")
+            digest[0] ^= 0x80
+        if not wide and n != 20:
+            var r: u8[32]
+            var s: u8[32]
+            try p256.sign(keys[133..<165], digest[..<n], r, s)
+            assert(same(r, raw[..<32]) and same(s, raw[32..<64]), "RFC 6979 P-256 signature mismatch")
+            var encoded: u8[80]
+            let size = vector_file.ecdsa_to_der(r, s, encoded)
+            assert(same(encoded[..<size], der[..<der_size]), "RFC 6979 P-256 DER mismatch")
+        elif not wide:
+            counts.out_of_scope += 1
+        counts.passed += 1
+
+func wycheproof(directory: str, name: str, wide: bool, hash_name: str, raw: bool, valid: usize*, invalid: usize*) -> !:
+    var lines = try vector_file.Lines.open(directory, name)
+    defer lines.close()
+    let w: usize = 48 if wide else 32
+    var x: u8[48]
+    var y: u8[48]
+    while lines.next():
+        if try lines.is(0, "key"):
+            assert(try lines.decode(1, x) == w and try lines.decode(2, y) == w)
+            continue
+        var message: u8[4096]
+        var signature: u8[8192]
+        var digest: u8[64]
+        let m = try lines.decode(1, message)
+        let n = try lines.decode(2, signature)
+        let d = try message_digest(hash_name.bytes, message[..<m], digest)
+        let accepted = check_encoded(wide, raw, x[..<w], y[..<w], digest[..<d], signature[..<n])
+        if try lines.is(0, "valid"):
+            assert(accepted, "valid Wycheproof ECDSA signature rejected")
+            *valid += 1
+        else:
+            assert(not accepted, "invalid Wycheproof ECDSA signature accepted")
+            *invalid += 1
+
+func cavp(directory: str, counts: Counts*) -> !:
+    var lines = try vector_file.Lines.open(directory, "cavp/ecdsa_sigver_0.txt")
+    defer lines.close()
+    while lines.next():
+        let wide = try lines.is(0, "P-384")
+        if not wide and not (try lines.is(0, "P-256")):
+            counts.out_of_scope += 1
+            continue
+        let w: usize = 48 if wide else 32
+        var x: u8[48]
+        var y: u8[48]
+        var r: u8[48]
+        var s: u8[48]
+        var message: u8[256]
+        var digest: u8[64]
+        discard(try lines.decode(2, x[..<w]))
+        discard(try lines.decode(3, y[..<w]))
+        discard(try lines.decode(4, r[..<w]))
+        discard(try lines.decode(5, s[..<w]))
+        let m = try lines.decode(6, message)
+        let n = try message_digest(try lines.field(1), message[..<m], digest)
+        assert(n != 0)
+        let accepted = check(wide, x[..<w], y[..<w], digest[..<n], r[..<w], s[..<w])
+        if try lines.is(7, "P"):
+            assert(accepted, "CAVP SigVer pass case rejected")
+            counts.passed += 1
+        else:
+            assert(not accepted, "CAVP SigVer fail case accepted")
+            counts.rejected += 1
+
+func openssl(directory: str, counts: Counts*) -> !:
+    var lines = try vector_file.Lines.open(directory, "openssl/ecdsa.txt")
+    defer lines.close()
+    while lines.next():
+        let wide = try lines.is(1, "p384")
+        let w: usize = 48 if wide else 32
+        var x: u8[48]
+        var y: u8[48]
+        var input: u8[256]
+        var signature: u8[160]
+        var digest: u8[64]
+        if try lines.is(0, "keypair"):
+            var d: u8[48]
+            discard(try lines.decode(3, d[..<w]))
+            discard(try lines.decode(4, x[..<w]))
+            discard(try lines.decode(5, y[..<w]))
+            var gx: u8[48]
+            var gy: u8[48]
+            if wide:
+                assert(try p384.multiply_generator(d[..<w], gx[..<w], gy[..<w]))
+            else:
+                assert(try p256.multiply_generator(d[..<w], gx[..<w], gy[..<w]))
+            assert(same(gx[..<w], x[..<w]) and same(gy[..<w], y[..<w]), "OpenSSL EC key pair mismatch")
+            counts.passed += 1
+        elif try lines.is(0, "digestsign"):
+            var d: u8[32]
+            discard(try lines.decode(3, d))
+            let m = try lines.decode(4, input)
+            let size = try lines.decode(5, signature)
+            let n = try message_digest(try lines.field(2), input[..<m], digest)
+            if n == 20:
+                counts.out_of_scope += 1
+                continue
+            var r: u8[32]
+            var s: u8[32]
+            try p256.sign(d, digest[..<n], r, s)
+            var encoded: u8[80]
+            let encoded_size = vector_file.ecdsa_to_der(r, s, encoded)
+            assert(same(encoded[..<encoded_size], signature[..<size]), "OpenSSL RFC 6979 signature mismatch")
+            counts.passed += 1
+        else:
+            discard(try lines.decode(3, x[..<w]))
+            discard(try lines.decode(4, y[..<w]))
+            let m = try lines.decode(5, input)
+            let size = try lines.decode(6, signature)
+            var n = m
+            if try lines.is(0, "verify"):
+                for i in 0..<m: digest[i] = input[i]
+            else:
+                n = try message_digest(try lines.field(2), input[..<m], digest)
+            let accepted = check_encoded(wide, false, x[..<w], y[..<w], digest[..<n], signature[..<size])
+            if try lines.is(7, "ok"):
+                assert(accepted, "OpenSSL ECDSA signature rejected")
+                counts.passed += 1
+            else:
+                assert(not accepted, "OpenSSL ECDSA error case accepted")
+                counts.rejected += 1
+
+## Optional argument: the vector directory (default tests/vectors).
+pub func main(arguments: str[]) -> i32!:
+    let directory = arguments[1] if arguments.length > 1 else "tests/vectors"
+    var kat = Counts()
+    try bearssl(directory, &kat)
+    var valid: usize = 0
+    var invalid: usize = 0
+    try wycheproof(directory, "wycheproof/ecdsa_secp256r1_sha256.txt", false, "sha256", false, &valid, &invalid)
+    try wycheproof(directory, "wycheproof/ecdsa_secp256r1_sha256_p1363.txt", false, "sha256", true, &valid, &invalid)
+    try wycheproof(directory, "wycheproof/ecdsa_secp256r1_sha512.txt", false, "sha512", false, &valid, &invalid)
+    try wycheproof(directory, "wycheproof/ecdsa_secp256r1_sha512_p1363.txt", false, "sha512", true, &valid, &invalid)
+    try wycheproof(directory, "wycheproof/ecdsa_secp384r1_sha256.txt", true, "sha256", false, &valid, &invalid)
+    try wycheproof(directory, "wycheproof/ecdsa_secp384r1_sha384.txt", true, "sha384", false, &valid, &invalid)
+    try wycheproof(directory, "wycheproof/ecdsa_secp384r1_sha384_p1363.txt", true, "sha384", true, &valid, &invalid)
+    try wycheproof(directory, "wycheproof/ecdsa_secp384r1_sha512.txt", true, "sha512", false, &valid, &invalid)
+    try wycheproof(directory, "wycheproof/ecdsa_secp384r1_sha512_p1363.txt", true, "sha512", true, &valid, &invalid)
+    var sigver = Counts()
+    try cavp(directory, &sigver)
+    var ossl = Counts()
+    try openssl(directory, &ossl)
+    assert(kat.passed == 20 and kat.out_of_scope == 12, "unexpected BearSSL ECDSA counts")
+    assert(valid == 1842 and invalid == 1906, "unexpected Wycheproof ECDSA counts")
+    assert(sigver.passed == 30 and sigver.rejected == 120 and sigver.out_of_scope == 975, "unexpected CAVP SigVer counts")
+    assert(ossl.passed == 36 and ossl.rejected == 26 and ossl.out_of_scope == 2, "unexpected OpenSSL ECDSA counts")
+    print(f"PASS ECDSA P-256/P-384: BearSSL {kat.passed} (+{kat.out_of_scope} P-521/SHA-1-signing out of scope), Wycheproof {valid} valid, {invalid} invalid, CAVP SigVer {sigver.passed} pass, {sigver.rejected} fail (+{sigver.out_of_scope} other curves), OpenSSL {ossl.passed} ok, {ossl.rejected} errors (+{ossl.out_of_scope} SHA-1 signing)")
+    return 0

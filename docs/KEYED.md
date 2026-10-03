@@ -5,7 +5,7 @@ Python/C reference crypto is test-only; OS entropy and allocation are existing
 Base standard-library facilities. HKDF is not a password-hardening algorithm.
 
 ```luce
-from crypto import secret_from_bytes, Hmac, hkdf
+from luce_crypto.crypto import secret_from_bytes, Hmac, hkdf
 
 let key = secret_from_bytes(b"public test key, not a real credential")
 let mac = Hmac(key, "sha256")

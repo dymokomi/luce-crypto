@@ -37,7 +37,7 @@ def main():
         subprocess.run([str(arg) for arg in command], cwd=ROOT, check=True, timeout=180)
     def emit(source, flags, target):
         run([args.base.resolve(), "build", source, *flags, "-o", target])
-    source = ROOT / "src/luce_crypto/memory_probe.lucb"
+    source = ROOT / "src/memory_probe.lucb"
     generated = output / "memory.c"
     emit(source, ["--emit=c"], generated)
     text = generated.read_text()
@@ -64,7 +64,7 @@ def main():
         report["assemblies"][mode] = hashlib.sha256(assembly.read_bytes()).hexdigest()
     # Retain actual Argon2 call sites, not only isolated primitive bodies. These
     # files enable review; presence/compilation is not a timing or erasure proof.
-    argon_source = ROOT / "src/luce_crypto/argon2_tests.lucb"
+    argon_source = ROOT / "src/argon2_tests.lucb"
     argon_c = output / "argon.c"
     emit(argon_source, ["--emit=c"], argon_c)
     argon_native = output / "argon-native3.s"

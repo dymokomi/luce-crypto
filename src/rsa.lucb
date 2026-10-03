@@ -1,0 +1,207 @@
+## RSA signature verification (RFC 8017): RSASSA-PKCS1-v1_5 and RSASSA-PSS
+## with MGF1, over SHA-1, SHA-224, SHA-256, SHA-384 or SHA-512 digests the
+## caller computed. The checks follow BearSSL's rsa_i31_pkcs1_vrfy and
+## rsa_i31_pss_vrfy and OpenSSL's RSA_verify_PKCS1_PSS_mgf1: the signature
+## must be exactly k bytes and below n; PKCS#1 v1.5 compares the whole
+## re-encoded block (DigestInfo with explicit NULL parameters only); PSS
+## checks the trailer byte, the unused top bits, the zero padding, the 0x01
+## separator and the salt length (or recovers it). Verification only; keys
+## and signatures are public, so the arithmetic in luce_crypto.bignum is
+## variable-time by design. Key-size policy belongs to the caller (TLS uses
+## 2048 bits and up).
+import bignum
+import sha1
+import sha2
+
+pub let invalid = sha2.invalid
+
+## Largest accepted modulus, in bits, and the default smallest.
+pub let max_bits: usize = 8192
+pub let min_bits: usize = 2048
+
+## `verify_pss` salt length that accepts any salt (recovered from the
+## signature, OpenSSL's "auto").
+pub let any_salt: usize = 0xffffffff
+
+## An RSA public key: modulus n and public exponent e.
+pub struct PublicKey:
+    var modulus: bignum.Natural
+    var context: bignum.Montgomery
+    var exponent: u8[8]
+    var exponent_size: usize
+    var bits: usize
+
+    ## The modulus length in bytes (the signature length).
+    pub func size() -> usize:
+        return (self.bits + 7) // 8
+
+    ## The modulus length in bits.
+    pub func bit_length() -> usize:
+        return self.bits
+
+## A key from big-endian modulus and exponent bytes (leading zeros allowed).
+## The modulus must be odd and `smallest` (default 2048) to 8192 bits; the
+## exponent odd, at least 3 and at most 64 bits.
+pub func public_key(modulus: const u8[], exponent: const u8[], smallest: usize = min_bits) -> PublicKey!:
+    var key = PublicKey(modulus = try bignum.Natural.from_bytes(modulus))
+    key.bits = key.modulus.bit_length()
+    if key.bits < smallest or key.bits > max_bits or (modulus[modulus.length - 1] & 1) == 0:
+        error(invalid, "RSA modulus must be odd and within the accepted size range")
+    var start: usize = 0
+    while start < exponent.length and exponent[start] == 0:
+        start += 1
+    let size = exponent.length - start
+    if size == 0 or size > 8 or (exponent[exponent.length - 1] & 1) == 0 or (size == 1 and exponent[start] < 3):
+        error(invalid, "RSA exponent must be odd, at least 3 and at most 64 bits")
+    for i in 0..<size:
+        key.exponent[i] = exponent[start + i]
+    key.exponent_size = size
+    key.context = try bignum.Montgomery.create(&key.modulus)
+    return key
+
+## SHA-1 or SHA-2 behind one interface, for MGF1 and the PSS hash.
+struct Digest:
+    var wide: sha2.Hash
+    var narrow: sha1.Hash
+    var legacy: bool
+
+    static func start(algorithm: str) -> Digest!:
+        if algorithm == "sha1":
+            return Digest(wide = sha2.Hash(), narrow = sha1.make(), legacy = true)
+        return Digest(wide = try sha2.make_hash(algorithm), narrow = sha1.make())
+
+    mutating func update(data: const u8[]) -> !:
+        if self.legacy:
+            try self.narrow.update(data)
+        else:
+            try self.wide.update(data)
+
+    mutating func finish(out: u8[]) -> usize!:
+        if self.legacy:
+            return try self.narrow.finish(out)
+        return try self.wide.finish(out)
+
+func digest_size(algorithm: str) -> usize!:
+    if algorithm == "sha1": return 20
+    if algorithm == "sha224": return 28
+    if algorithm == "sha256": return 32
+    if algorithm == "sha384": return 48
+    if algorithm == "sha512": return 64
+    error(invalid, "RSA digest must be sha1, sha224, sha256, sha384 or sha512")
+
+## The DER DigestInfo prefix for `algorithm` (RFC 8017 §9.2 note 1).
+func digest_info(algorithm: str) -> const u8[]:
+    if algorithm == "sha1": return b"\x30\x21\x30\x09\x06\x05\x2b\x0e\x03\x02\x1a\x05\x00\x04\x14"
+    if algorithm == "sha224": return b"\x30\x2d\x30\x0d\x06\x09\x60\x86\x48\x01\x65\x03\x04\x02\x04\x05\x00\x04\x1c"
+    if algorithm == "sha256": return b"\x30\x31\x30\x0d\x06\x09\x60\x86\x48\x01\x65\x03\x04\x02\x01\x05\x00\x04\x20"
+    if algorithm == "sha384": return b"\x30\x41\x30\x0d\x06\x09\x60\x86\x48\x01\x65\x03\x04\x02\x02\x05\x00\x04\x30"
+    return b"\x30\x51\x30\x0d\x06\x09\x60\x86\x48\x01\x65\x03\x04\x02\x03\x05\x00\x04\x40"
+
+## s^e mod n written as `out.length` big-endian bytes; false when the
+## signature is not exactly k bytes, not below n, or does not fit `out`.
+func open_signature(key: const PublicKey*, signature: const u8[], out: u8[]) -> bool!:
+    if signature.length != key.size():
+        return false
+    let s = try bignum.Natural.from_bytes(signature)
+    if bignum.compare(&s, &key.modulus) >= 0:
+        return false
+    let m = try bignum.power(&key.context, &s, key.exponent[..<key.exponent_size])
+    m.to_bytes(out) catch failure:
+        discard(failure)
+        return false
+    return true
+
+## RSASSA-PKCS1-v1_5 verification (RFC 8017 §8.2.2) of `digest` under
+## `algorithm`, by encoding the expected EMSA-PKCS1-v1_5 block and comparing.
+pub func verify_pkcs1(key: const PublicKey*, algorithm: str, digest: const u8[], signature: const u8[]) -> bool!:
+    let size = try digest_size(algorithm)
+    if digest.length != size:
+        return false
+    let prefix = digest_info(algorithm)
+    let k = key.size()
+    if k < 11 + prefix.length + size:
+        return false
+    var em: u8[1024]
+    if not (try open_signature(key, signature, em[..<k])):
+        return false
+    let filler = k - 3 - prefix.length - size
+    var difference: u8 = em[0] | (em[1] ^ 1) | em[2 + filler]
+    for i in 0..<filler:
+        difference |= em[2 + i] ^ 0xff
+    for i in 0..<prefix.length:
+        difference |= em[3 + filler + i] ^ prefix[i]
+    for i in 0..<size:
+        difference |= em[3 + filler + prefix.length + i] ^ digest[i]
+    return difference == 0
+
+## MGF1 (RFC 8017 §B.2.1) XORed into `mask`.
+func mgf1_xor(algorithm: str, seed: const u8[], mask: u8[]) -> !:
+    var block: u8[64]
+    var counter: u32 = 0
+    var done: usize = 0
+    while done < mask.length:
+        var state = try Digest.start(algorithm)
+        try state.update(seed)
+        var c: u8[4]
+        c[0] = (u8)(counter >> 24)
+        c[1] = (u8)((counter >> 16) & 0xff)
+        c[2] = (u8)((counter >> 8) & 0xff)
+        c[3] = (u8)(counter & 0xff)
+        try state.update(c)
+        let size = try state.finish(block)
+        let take = size if mask.length - done > size else mask.length - done
+        for i in 0..<take:
+            mask[done + i] ^= block[i]
+        done += take
+        counter += 1
+
+## RSASSA-PSS verification (RFC 8017 §8.1.2, EMSA-PSS-VERIFY §9.1.2) of a
+## digest under `algorithm`, with MGF1 over `mask_algorithm` (default: the
+## same hash) and a salt of exactly `salt_size` bytes, or any length when
+## `salt_size` is `any_salt`.
+pub func verify_pss(key: const PublicKey*, algorithm: str, digest: const u8[], signature: const u8[], salt_size: usize,
+    mask_algorithm: str = "") -> bool!:
+    let size = try digest_size(algorithm)
+    let mgf = algorithm if mask_algorithm.length == 0 else mask_algorithm
+    discard(try digest_size(mgf))
+    if digest.length != size:
+        return false
+    let em_bits = key.bits - 1
+    let em_size = (em_bits + 7) // 8
+    let least_salt: usize = 0 if salt_size == any_salt else salt_size
+    if em_size < size + least_salt + 2:
+        return false
+    var em: u8[1024]
+    if not (try open_signature(key, signature, em[..<em_size])):
+        return false
+    if em[em_size - 1] != 0xbc:
+        return false
+    let db_size = em_size - size - 1
+    let unused = 8 * em_size - em_bits
+    let top_mask = (u8)(0xff >> (u8)unused)
+    if (em[0] & ~top_mask) != 0:
+        return false
+    var db: u8[1024]
+    for i in 0..<db_size:
+        db[i] = em[i]
+    try mgf1_xor(mgf, em[db_size..<db_size + size], db[..<db_size])
+    db[0] &= top_mask
+    var separator: usize = 0
+    while separator < db_size and db[separator] == 0:
+        separator += 1
+    if separator == db_size or db[separator] != 1:
+        return false
+    let salt = db_size - separator - 1
+    if salt_size != any_salt and salt != salt_size:
+        return false
+    var state = try Digest.start(algorithm)
+    let padding: u8[8] = [0, 0, 0, 0, 0, 0, 0, 0]
+    try state.update(padding)
+    try state.update(digest)
+    try state.update(db[db_size - salt..<db_size])
+    var expected: u8[64]
+    discard(try state.finish(expected))
+    var difference: u8 = 0
+    for i in 0..<size:
+        difference |= expected[i] ^ em[db_size + i]
+    return difference == 0

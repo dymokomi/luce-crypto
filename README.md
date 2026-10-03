@@ -7,7 +7,7 @@ signature verification, ML-DSA-65 and experimental owned secret buffers. No fore
 dependency. Keyed APIs are not yet approved for real credential custody.
 
 ```luce
-from crypto import Hasher, digest
+from luce_crypto.crypto import Hasher, digest
 
 let state = Hasher("sha256")
 state.update(b"package ")

@@ -12,7 +12,7 @@ or encryption format. Do not use it for real credentials before independent revi
 This example uses intentionally tiny **test-only** costs and public test data:
 
 ```luce
-from crypto import Argon2id, secret_from_bytes
+from luce_crypto.crypto import Argon2id, secret_from_bytes
 
 let password = secret_from_bytes(b"password")
 let configuration = Argon2id(32, 2, 4, 32, 4)

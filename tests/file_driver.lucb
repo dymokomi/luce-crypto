@@ -1,5 +1,5 @@
-import crypto_native as sha2
-import files
+import native as sha2
+import luce_std.files
 import c
 
 pub func main(arguments: str[]) -> i32!:

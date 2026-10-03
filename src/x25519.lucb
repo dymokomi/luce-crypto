@@ -1,0 +1,241 @@
+## RFC 7748 X25519, the key exchange TLS 1.3 uses. The structure follows
+## Thomas Pornin's BearSSL `ec_c25519_m31` (MIT; see NOTICE.md): a field
+## element is nine 30-bit limbs held in u32 words, products are accumulated
+## in u64, and the scalar multiplication is the RFC 7748 Montgomery ladder
+## with a constant-time conditional swap. No branch or memory index depends
+## on the scalar or on the point.
+import secure
+import sha2
+
+let mask30: u32 = 0x3fffffff
+
+## Little-endian bytes to nine 30-bit limbs; the final partial limb is
+## stored in out[8].
+func decode(out: u32[], bytes: const u8[]):
+    var acc: u32 = 0
+    var bits: u32 = 0
+    var limb: usize = 0
+    for i in 0..<bytes.length:
+        let b = (u32)bytes[i]
+        if bits < 22:
+            acc |= b << bits
+            bits += 8
+        else:
+            out[limb] = (acc | (b << bits)) & mask30
+            limb += 1
+            acc = b >> (30 - bits)
+            bits -= 22
+    out[limb] = acc
+
+## Nine 30-bit limbs to `out.length` little-endian bytes.
+func encode(out: u8[], limbs: const u32[]):
+    var acc: u32 = 0
+    var bits: u32 = 0
+    var limb: usize = 0
+    for i in 0..<out.length:
+        if bits < 8:
+            let w = limbs[limb]
+            limb += 1
+            out[i] = (u8)((acc | (w << bits)) & 0xff)
+            acc = w >> (8 - bits)
+            bits += 22
+        else:
+            out[i] = (u8)(acc & 0xff)
+            acc >>= 8
+            bits -= 8
+
+## Full product of two 270-bit values into eighteen 30-bit limbs.
+func multiply9(d: u32[], a: const u32[], b: const u32[]):
+    var t: u64[17]
+    for i in 0..<(usize)9:
+        for j in 0..<(usize)9:
+            t[i + j] += (u64)a[i] * (u64)b[j]
+    var carry: u64 = 0
+    for i in 0..<(usize)17:
+        let w = t[i] + carry
+        d[i] = (u32)(w & 0x3fffffff)
+        carry = w >> 30
+    d[17] = (u32)carry
+
+## Reduce an eighteen-limb product modulo 2^255 - 19 to below twice the
+## modulus: limb 9 + k folds into limb k with factor 19 * 2^15.
+func reduce(d: u32[], t: u32[]):
+    var carry = (t[8] >> 15) * 19
+    t[8] &= 0x7fff
+    for i in 0..<(usize)9:
+        let w = (u64)t[i] + (u64)carry + (u64)t[i + 9] * 622592
+        t[i] = (u32)(w & 0x3fffffff)
+        carry = (u32)(w >> 30)
+    carry = (t[8] >> 15) * 19
+    t[8] &= 0x7fff
+    for i in 0..<(usize)9:
+        let z = t[i] + carry
+        d[i] = z & mask30
+        carry = z >> 30
+
+func field_mul(d: u32[], a: const u32[], b: const u32[]):
+    var t: u32[18]
+    multiply9(t, a, b)
+    reduce(d, t)
+
+func field_square(d: u32[], a: const u32[]):
+    field_mul(d, a, a)
+
+## a + b, partially reduced.
+func field_add(d: u32[], a: const u32[], b: const u32[]):
+    var carry: u32 = 0
+    var w: u32 = 0
+    for i in 0..<(usize)9:
+        w = a[i] + b[i] + carry
+        d[i] = w & mask30
+        carry = w >> 30
+    carry = (w >> 15) * 19
+    d[8] &= 0x7fff
+    for i in 0..<(usize)9:
+        w = d[i] + carry
+        d[i] = w & mask30
+        carry = w >> 30
+
+## a - b + 2p, partially reduced; the borrow travels by arithmetic shift.
+func field_sub(d: u32[], a: const u32[], b: const u32[]):
+    var carry: u32 = 0 -% 38
+    var w: u32 = 0
+    for i in 0..<(usize)9:
+        w = a[i] -% b[i] +% carry
+        d[i] = w & mask30
+        carry = (u32)((i32)w >> 30)
+    carry = ((w +% 0x10000) >> 15) * 19
+    d[8] &= 0x7fff
+    for i in 0..<(usize)9:
+        w = d[i] + carry
+        d[i] = w & mask30
+        carry = w >> 30
+
+## a * 121665 (the RFC 7748 a24 constant), partially reduced.
+func field_mul_a24(d: u32[], a: const u32[]):
+    var carry: u32 = 0
+    for i in 0..<(usize)8:
+        let w = (u64)a[i] * 121665 + (u64)carry
+        d[i] = (u32)(w & 0x3fffffff)
+        carry = (u32)(w >> 30)
+    let top = (u64)a[8] * 121665 + (u64)carry
+    d[8] = (u32)(top & 0x7fff)
+    carry = (u32)(top >> 15) * 19
+    for i in 0..<(usize)9:
+        let z = d[i] + carry
+        d[i] = z & mask30
+        carry = z >> 30
+
+## Subtract the modulus once when the value is not below it, without branching.
+func reduce_final(d: u32[]):
+    var t: u32[9]
+    var carry: u32 = 19
+    for i in 0..<(usize)9:
+        let w = d[i] + carry
+        carry = w >> 30
+        t[i] = w & mask30
+    let select = 0 -% (t[8] >> 15)
+    t[8] &= 0x7fff
+    for i in 0..<(usize)9:
+        d[i] ^= select & (d[i] ^ t[i])
+
+## Swap a and b when `bit` is 1, without branching.
+func conditional_swap(a: u32[], b: u32[], bit: u32):
+    let select = 0 -% bit
+    for i in 0..<(usize)9:
+        let t = select & (a[i] ^ b[i])
+        a[i] ^= t
+        b[i] ^= t
+
+## The X25519 function: `out` = `scalar` * `point`, all 32 little-endian
+## bytes. The scalar is clamped and the point's top bit ignored (RFC 7748 §5).
+pub func scalarmult(out: u8[], scalar: const u8[], point: const u8[]) -> !:
+    if out.length < 32 or scalar.length != 32 or point.length != 32:
+        error(sha2.invalid, "X25519 needs a 32-byte scalar and point and a 32-byte output")
+    var k: u8[32]
+    var u: u8[32]
+    defer secure.wipe(k)
+    for i in 0..<(usize)32:
+        k[i] = scalar[i]
+        u[i] = point[i]
+    k[0] &= 248
+    k[31] &= 127
+    k[31] |= 64
+    u[31] &= 127
+    var x1: u32[9]
+    var x2: u32[9]
+    var z2: u32[9]
+    var x3: u32[9]
+    var z3: u32[9]
+    var a: u32[9]
+    var aa: u32[9]
+    var b: u32[9]
+    var bb: u32[9]
+    var c: u32[9]
+    var d: u32[9]
+    var e: u32[9]
+    var da: u32[9]
+    var cb: u32[9]
+    defer secure.wipe(u8[]((u8*)&x2[0], sizeof(x2)))
+    defer secure.wipe(u8[]((u8*)&z2[0], sizeof(z2)))
+    defer secure.wipe(u8[]((u8*)&x3[0], sizeof(x3)))
+    defer secure.wipe(u8[]((u8*)&z3[0], sizeof(z3)))
+    decode(x1, u)
+    x3 = x1
+    x2[0] = 1
+    z3[0] = 1
+    var swap: u32 = 0
+    var i: i32 = 254
+    while i >= 0:
+        let bit = (u32)(k[(usize)(i >> 3)] >> (u8)(i & 7)) & 1
+        swap ^= bit
+        conditional_swap(x2, x3, swap)
+        conditional_swap(z2, z3, swap)
+        swap = bit
+        field_add(a, x2, z2)
+        field_square(aa, a)
+        field_sub(b, x2, z2)
+        field_square(bb, b)
+        field_sub(e, aa, bb)
+        field_add(c, x3, z3)
+        field_sub(d, x3, z3)
+        field_mul(da, d, a)
+        field_mul(cb, c, b)
+        field_add(x3, da, cb)
+        field_square(x3, x3)
+        field_sub(z3, da, cb)
+        field_square(z3, z3)
+        field_mul(z3, z3, x1)
+        field_mul(x2, aa, bb)
+        field_mul_a24(z2, e)
+        field_add(z2, z2, aa)
+        field_mul(z2, e, z2)
+        i -= 1
+    conditional_swap(x2, x3, swap)
+    conditional_swap(z2, z3, swap)
+    # z2^(p - 2) by a fixed chain: z^(2^16 - 1), then z^(2^240 - 1), then the
+    # low 15 exponent bits 0x7feb.
+    a = z2
+    for _ in 0..<(usize)15:
+        field_square(a, a)
+        field_mul(a, a, z2)
+    b = a
+    for _ in 0..<(usize)14:
+        for _ in 0..<(usize)16:
+            field_square(b, b)
+        field_mul(b, b, a)
+    var j: i32 = 14
+    while j >= 0:
+        field_square(b, b)
+        if ((0xffeb >> j) & 1) == 1:
+            field_mul(b, z2, b)
+        j -= 1
+    field_mul(x2, x2, b)
+    reduce_final(x2)
+    encode(out[..<32], x2)
+
+## `out` = `scalar` * the base point (u = 9): the public value for a private key.
+pub func scalarmult_base(out: u8[], scalar: const u8[]) -> !:
+    var nine: u8[32]
+    nine[0] = 9
+    try scalarmult(out, scalar, nine)

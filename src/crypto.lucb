@@ -1,0 +1,203 @@
+## Owning Luce hashing/keyed API. Experimental: see the secret-memory limitations.
+import interop
+import memory
+import sha2
+import secret
+import secure
+import hmac as mac
+import hkdf as kdf
+import argon2id as password_kdf
+
+pub let invalid = sha2.invalid
+pub let closed = sha2.closed
+pub let length_exceeded = sha2.length_exceeded
+
+pub struct Digest:
+    var data: u8[64]
+    var text: u8[128]
+    var used: usize
+    var disposed: bool
+
+    pub func bytes() -> const u8[]!:
+        if self.disposed: error(closed, "digest is closed")
+        return self.data[..<self.used]
+
+    pub func hexdigest() -> str!:
+        if self.disposed: error(closed, "digest is closed")
+        return (str)self.text[..<self.used * 2]
+
+    pub mutating func close():
+        self = Digest(disposed = true)
+
+pub let digest_type: interop.Type[Digest] = interop.Type[Digest]("Digest", Digest.close, closeable = true)
+
+func snapshot(state: const sha2.Hash*) -> interop.Reference[Digest]!:
+    discard(try state.digest_size())
+    var reservation = try interop.Reservation[Digest](digest_type)
+    errdefer reservation.cancel()
+    let result = try new Digest() in memory.heap
+    errdefer free(result) in memory.heap
+    result.used = try state.digest(result.data)
+    let digits = b"0123456789abcdef"
+    for i in 0..<result.used:
+        result.text[i * 2] = digits[(usize)(result.data[i] >> 4)]
+        result.text[i * 2 + 1] = digits[(usize)(result.data[i] & 15)]
+    return reservation.publish(result, memory.heap)
+
+pub struct Hasher:
+    var state: sha2.Hash
+
+    pub func init(algorithm: str = "sha256") -> !:
+        self.state = try sha2.make_hash(algorithm)
+
+    pub mutating func update(input: const u8[]) -> !:
+        try self.state.update(input)
+
+    pub func digest() -> interop.Reference[Digest]!:
+        return try snapshot(&self.state)
+
+    pub mutating func reset() -> !:
+        try self.state.reset()
+
+    pub mutating func close():
+        self.state.close()
+
+pub let hasher_type: interop.Type[Hasher] = interop.Type[Hasher]("Hasher", Hasher.close, closeable = true)
+
+pub func digest(input: const u8[], algorithm: str = "sha256") -> interop.Reference[Digest]!:
+    var state = try sha2.make_hash(algorithm)
+    defer state.close()
+    try state.update(input)
+    return try snapshot(&state)
+
+## No implicit bytes/hex accessor: reveal explicitly copies into managed memory.
+pub struct Secret:
+    var buffer: secret.Buffer
+
+    pub func length() -> i64!:
+        return (i64)(try self.buffer.bytes()).length
+
+    pub func matches(candidate: const u8[]) -> bool!:
+        return secure.equal(try self.buffer.bytes(), candidate)
+
+    pub func reveal() -> const u8[]!:
+        return try self.buffer.bytes()
+
+    pub mutating func close():
+        self.buffer.close()
+
+pub let secret_type: interop.Type[Secret] = interop.Type[Secret]("Secret", Secret.close, closeable = true)
+
+func owned_secret(buffer: secret.Buffer) -> interop.Reference[Secret]!:
+    let result = new Secret(buffer = buffer) in memory.heap catch failure:
+        var cleanup = buffer
+        cleanup.close()
+        error(failure.code, failure.message)
+    return try interop.Reference[Secret].adopt(result, secret_type, memory.heap)
+
+pub func secret_from_bytes(input: const u8[]) -> interop.Reference[Secret]!:
+    return try owned_secret(try secret.from_bytes(input))
+
+pub func random_secret(length: i64) -> interop.Reference[Secret]!:
+    if length < 0 or length > 65536: error(invalid, "secret length must be in 0-65536")
+    return try owned_secret(try secret.random((usize)length))
+
+pub struct Hmac:
+    var engine: mac.Hmac
+
+    pub func init(key: interop.Reference[Secret], algorithm: str = "sha256") -> !:
+        let owner = try key.get()
+        self.engine = try mac.make_hmac(try owner.buffer.bytes(), algorithm)
+
+    pub mutating func update(input: const u8[]) -> !:
+        try self.engine.update(input)
+
+    pub mutating func finish() -> interop.Reference[Digest]!:
+        discard(try self.engine.size())
+        var reservation = try interop.Reservation[Digest](digest_type)
+        errdefer reservation.cancel()
+        let result = try new Digest() in memory.heap
+        errdefer free(result) in memory.heap
+        result.used = try self.engine.finish(result.data)
+        let digits = b"0123456789abcdef"
+        for i in 0..<result.used:
+            result.text[i * 2] = digits[(usize)(result.data[i] >> 4)]
+            result.text[i * 2 + 1] = digits[(usize)(result.data[i] & 15)]
+        return reservation.publish(result, memory.heap)
+
+    pub mutating func verify(expected: const u8[]) -> bool!:
+        return try self.engine.verify(expected)
+
+    pub mutating func close():
+        self.engine.close()
+
+pub let hmac_type: interop.Type[Hmac] = interop.Type[Hmac]("Hmac", Hmac.close, closeable = true)
+
+pub func authenticate(key: interop.Reference[Secret], input: const u8[], algorithm: str = "sha256") -> interop.Reference[Digest]!:
+    var context = try Hmac(key, algorithm)
+    defer context.close()
+    try context.update(input)
+    return try context.finish()
+
+pub func hkdf(input: interop.Reference[Secret], salt: const u8[], info: const u8[], length: i64,
+    algorithm: str = "sha256") -> interop.Reference[Secret]!:
+    var hash_state = try sha2.make_hash(algorithm)
+    defer hash_state.close()
+    let count = try hash_state.digest_size()
+    if length < 0 or length > (i64)(255 * count): error(invalid, "HKDF length must be in 0-255*HashLen")
+    let owner = try input.get()
+    let source = try owner.buffer.bytes()
+    var buffer = try secret.create((usize)length)
+    kdf.derive(source, salt, info, try buffer.writable(), algorithm) catch failure:
+        buffer.close()
+        error(failure.code, failure.message)
+    return try owned_secret(buffer)
+
+## Explicit costs, immutable configuration during derive, owning secret result.
+## Default admission ceilings are not calibrated vault parameters. One config is
+## used by one Luce caller at a time; Base internals own/join their lane workers.
+pub struct Argon2id:
+    var parameters: password_kdf.Parameters = password_kdf.Parameters()
+    var count: usize
+    var workers: usize
+    var disposed: bool = true
+
+    pub func init(memory_kib: i64, passes: i64, lanes: i64, length: i64 = 32, workers: i64 = 1) -> !:
+        if memory_kib < 0 or memory_kib > 0xffffffff or passes < 0 or passes > 0xffffffff or lanes < 0 or lanes > 0xffffffff:
+            error(invalid, "Argon2id costs must be nonnegative u32 values")
+        if length < 4 or length > 65536 or workers < 1 or workers > 8:
+            error(invalid, "Argon2id result/worker bounds")
+        let parameters = password_kdf.Parameters(memory_kib = (u32)memory_kib, passes = (u32)passes, lanes = (u32)lanes)
+        discard(try password_kdf.validate(parameters, password_kdf.Limits(), 0, 8, 0, 0, (usize)length, (usize)workers))
+        self.parameters = parameters
+        self.count = (usize)length
+        self.workers = (usize)workers
+        self.disposed = false
+
+    func run(password: const u8[], salt: const u8[], key: const u8[], associated: const u8[]) -> interop.Reference[Secret]!:
+        if self.disposed: error(closed, "Argon2id configuration is closed")
+        discard(try password_kdf.validate(self.parameters, password_kdf.Limits(), password.length, salt.length,
+            key.length, associated.length, self.count, self.workers))
+        var buffer = try secret.create(self.count)
+        password_kdf.derive(password, salt, try buffer.writable(), self.parameters, key, associated, self.workers) catch failure:
+            buffer.close()
+            error(failure.code, failure.message)
+        return try owned_secret(buffer)
+
+    pub func derive(password: interop.Reference[Secret], salt: const u8[], associated: const u8[] = b"") -> interop.Reference[Secret]!:
+        let owner = try password.get()
+        return try self.run(try owner.buffer.bytes(), salt, b"", associated)
+
+    pub func derive_keyed(password: interop.Reference[Secret], key: interop.Reference[Secret], salt: const u8[],
+        associated: const u8[] = b"") -> interop.Reference[Secret]!:
+        let password_owner = try password.get()
+        let key_owner = try key.get()
+        return try self.run(try password_owner.buffer.bytes(), salt, try key_owner.buffer.bytes(), associated)
+
+    pub mutating func close():
+        self.parameters = password_kdf.Parameters()
+        self.count = 0
+        self.workers = 0
+        self.disposed = true
+
+pub let argon2id_type: interop.Type[Argon2id] = interop.Type[Argon2id]("Argon2id", Argon2id.close, closeable = true)

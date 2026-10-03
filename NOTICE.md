@@ -111,7 +111,7 @@ replaces an earlier port of the public-domain TweetNaCl routine.
 P-256 is original Luce code whose point layer (Jacobian formulas, 2-bit
 variable-base window with masked selection, 4-bit fixed-base window with a
 constant-time table scan) follows BearSSL `ec_p256_m31.c` (MIT, Copyright (c)
-2016 Thomas Pornin); `src/luce_crypto/p256_table.lucb` is recomputed from the
+2016 Thomas Pornin); `src/p256_table.lucb` is recomputed from the
 curve constants by `tools/p256_table.py`. ECDSA nonces follow RFC 6979 §3.2,
 as BearSSL's `ecdsa_i31_sign_raw` does. Verification uses a joint two-bit
 window (Straus); P-384 multiplication uses CIOS Montgomery products.
