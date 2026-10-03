@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Extract RFC test vectors into tests/vectors/rfc/*.txt.
+"""Extract RFC test vectors into rfc/*.txt of the luce-crypto-vectors checkout
+(located by tests/vector_root.py).
 
 Usage: tools/rfc_vectors.py RFC_DIR
 
@@ -23,7 +24,10 @@ import re
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT = ROOT / "tests/vectors/rfc"
+sys.path.insert(0, str(ROOT / "tests"))
+from vector_root import vector_root  # noqa: E402
+
+OUT = vector_root() / "rfc"
 PAGE = re.compile(r"^(Nir & Langley|RFC 8439|Langley, et al\.|RFC 7748)\s")
 DUMP = re.compile(r"^\s*\d{3}\s{2}((?:[0-9a-fA-F]{2} ){0,15}[0-9a-fA-F]{2})")
 BARE = re.compile(r"^\s*((?:[0-9a-fA-F]{2} ){0,15}[0-9a-fA-F]{2})\s*$")

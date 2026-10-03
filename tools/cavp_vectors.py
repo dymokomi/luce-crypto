@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Convert NIST CAVP response files into line files under tests/vectors/cavp/.
+"""Convert NIST CAVP response files into line files under cavp/ of the
+luce-crypto-vectors checkout (located by tests/vector_root.py).
 
 Usage: tools/cavp_vectors.py GCM_DIR ECDSA_DIR
 
@@ -24,7 +25,10 @@ import re
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT = ROOT / "tests/vectors/cavp"
+sys.path.insert(0, str(ROOT / "tests"))
+from vector_root import vector_root  # noqa: E402
+
+OUT = vector_root() / "cavp"
 LIMIT = 900_000
 
 

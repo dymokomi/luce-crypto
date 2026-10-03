@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Convert OpenSSL EVP test data into line files under tests/vectors/openssl/.
+"""Convert OpenSSL EVP test data into line files under openssl/ of the
+luce-crypto-vectors checkout (located by tests/vector_root.py).
 
 Usage: tools/openssl_vectors.py OPENSSL_CHECKOUT
 
@@ -31,7 +32,10 @@ import sys
 
 REVISION = "adb795d9b166b7342ad1227b6241f3d31d973438"
 ROOT = Path(__file__).resolve().parents[1]
-OUT = ROOT / "tests/vectors/openssl"
+sys.path.insert(0, str(ROOT / "tests"))
+from vector_root import vector_root  # noqa: E402
+
+OUT = vector_root() / "openssl"
 DIGESTS = {"sha1": "sha1", "sha224": "sha224", "sha256": "sha256", "sha384": "sha384", "sha512": "sha512",
            "sha2-224": "sha224", "sha2-256": "sha256", "sha2-384": "sha384", "sha2-512": "sha512"}
 

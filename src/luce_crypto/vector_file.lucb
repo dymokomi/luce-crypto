@@ -1,9 +1,26 @@
-## Test support: reads the line-oriented vector files under tests/vectors/
-## (written by tools/wycheproof.py). A line is space-separated fields; "-" is
-## an empty field. Not exported by the package.
+## Test support: reads the line-oriented vector files of the
+## luce-crypto-vectors checkout (written by the converters in tools/). A line is
+## space-separated fields; "-" is an empty field. Not exported by the package.
 import c
 import files
+import os
 import luce_crypto.sha2 as sha2
+
+## The vector directory: the first program argument, else LUCE_CRYPTO_VECTORS,
+## else the sibling checkout ../luce-crypto-vectors. A missing checkout is an
+## error, so tests never pass by skipping their vectors.
+pub func vector_directory(arguments: str[]) -> str!:
+    var chosen: str = "../luce-crypto-vectors"
+    if arguments.length > 1:
+        chosen = arguments[1]
+    elif let configured = os.env("LUCE_CRYPTO_VECTORS"):
+        if configured.length > 0:
+            chosen = configured
+    var notice = Lines.open(chosen, "NOTICE.md") catch failure:
+        print(f"luce-crypto test vectors not found at {chosen}: clone https://github.com/dymokomi/luce-crypto-vectors beside luce-crypto (at the revision in bootstrap/PACKAGES) or set LUCE_CRYPTO_VECTORS")
+        error(failure.code, failure.message)
+    notice.close()
+    return chosen
 
 ## A whole vector file and a cursor over its lines and fields.
 pub struct Lines:

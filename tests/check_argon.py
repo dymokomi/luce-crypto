@@ -8,8 +8,9 @@ from pathlib import Path
 import struct
 import tempfile
 from check_hashes import checked, ROOT
+from vector_root import vector_root
 
-FIXTURE = Path(__file__).resolve().parent / "vectors/argon2id.json"
+FIXTURE = vector_root() / "argon2id.json"
 MAGIC = b"LCARG01\0"
 FIXTURE_SHA256 = "3799f3e8b6dd518d8f5e7a694ff961ec2709dfe343c3a934eabbfbd258f5ca21"
 

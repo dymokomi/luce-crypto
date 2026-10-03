@@ -6,14 +6,15 @@ from check_hashes import check, check_files, checked
 from check_keyed import check_keyed
 from check_blake import check_blake
 from check_argon import check_argon
+from vector_root import vector_root
 
 
-## Vector programs: each takes the tests/vectors directory as its argument.
+## Vector programs: each takes the luce-crypto-vectors directory as its argument.
 VECTOR_PROGRAMS = ("hash-kat", "gcm-tests", "chacha-kat", "x25519-kat", "rsa-kat", "ecdsa-kat", "ec-kat")
 
 
 def check_vectors(binaries, timeout=900):
-    vectors = Path(__file__).resolve().parents[1] / "tests/vectors"
+    vectors = vector_root()
     for name in VECTOR_PROGRAMS:
         result = checked([Path(binaries) / name, vectors], timeout=timeout)
         assert result.stdout.startswith(b"PASS "), result.stdout

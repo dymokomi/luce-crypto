@@ -206,9 +206,9 @@ func openssl(directory: str, counts: Counts*) -> !:
                 assert(not accepted, "OpenSSL ECDSA error case accepted")
                 counts.rejected += 1
 
-## Optional argument: the vector directory (default tests/vectors).
+## Optional argument: the vector directory (default: see vector_file.vector_directory).
 pub func main(arguments: str[]) -> i32!:
-    let directory = arguments[1] if arguments.length > 1 else "tests/vectors"
+    let directory = try vector_file.vector_directory(arguments)
     var kat = Counts()
     try bearssl(directory, &kat)
     var valid: usize = 0

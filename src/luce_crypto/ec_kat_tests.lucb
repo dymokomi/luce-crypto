@@ -200,9 +200,9 @@ func openssl(directory: str) -> usize!:
         count += 1
     return count
 
-## Optional argument: the vector directory (default tests/vectors).
+## Optional argument: the vector directory (default: see vector_file.vector_directory).
 pub func main(arguments: str[]) -> i32!:
-    let directory = arguments[1] if arguments.length > 1 else "tests/vectors"
+    let directory = try vector_file.vector_directory(arguments)
     var out_of_scope: usize = 0
     let known = try bearssl(directory, &out_of_scope)
     let keys = try keygen()

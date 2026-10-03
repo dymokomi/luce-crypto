@@ -7,6 +7,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+from vector_root import vector_root
 
 ROOT = Path(__file__).resolve().parents[1]
 ALGORITHMS = ("sha256", "sha384", "sha512")
@@ -38,7 +39,7 @@ def vectors(path):
 def cases():
     for algorithm in ALGORITHMS:
         for group in ("ShortMsg", "LongMsg"):
-            for message, expected in vectors(ROOT / f"tests/vectors/{algorithm.upper()}{group}.rsp"):
+            for message, expected in vectors(vector_root() / f"{algorithm.upper()}{group}.rsp"):
                 assert hashlib.new(algorithm, message).digest() == expected, "oracle disagrees with NIST"
                 yield algorithm, message, expected, "nist"
         rng = random.Random(19520001)

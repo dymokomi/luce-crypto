@@ -109,7 +109,7 @@ Out of scope, by source (each is counted by its test program):
   cases are run: X25519 must produce the listed value; ECDH refuses compressed
   and unusual encodings; PKCS#1 refuses DigestInfo without NULL parameters.
 - NIST CAVP SigVer: curves other than P-256/P-384 (975 cases).
-- OpenSSL: see `tests/vectors/openssl/SUMMARY.txt` (other hashes, MACs,
+- OpenSSL: see `openssl/SUMMARY.txt` in luce-crypto-vectors (other hashes, MACs,
   ciphers and curves, signing and decryption, FIPS-provider policy checks,
   RSASSA-PSS keys with embedded parameters, keys generated at run time).
 - IETF: the RFC 7748 million-iteration chain is not in CI (runtime).
@@ -122,8 +122,13 @@ See [Argon2id APIs, admission budgets and cancellation](docs/ARGON2ID.md).
 
 ## Tests
 
-Sibling compiler sources are pinned in `bootstrap/BASE` and `bootstrap/LUCE`.
-They are read-only inputs; generated builds stay under this repository's ignored
+Sibling compiler sources are pinned in `bootstrap/BASE` and `bootstrap/LUCE`,
+and sibling test inputs in `bootstrap/PACKAGES`. Test vectors are not part of
+the package: they live in
+[luce-crypto-vectors](https://github.com/dymokomi/luce-crypto-vectors), which the
+tests read from `../luce-crypto-vectors` (or `LUCE_CRYPTO_VECTORS=path`); clone it
+at the pinned revision. A missing checkout fails the tests. Sibling sources are
+read-only inputs; generated builds stay under this repository's ignored
 `build/` directory. Supported test hosts: macOS arm64 and Linux x86_64.
 
 ```sh
@@ -137,14 +142,14 @@ python3 tools/codegen_probe.py
 
 Or supply `--base /path/to/luce-base --luce /path/to/luce` to `tests/run.py`.
 The runner builds and executes every vector program in all six modes and under
-the sanitizers (see Validation above). Vector files live under `tests/vectors/`
-and are regenerated from local reference checkouts (kept out of the
-repository) by `tools/bearssl_vectors.py`, `tools/wycheproof.py`,
+the sanitizers (see Validation above). The vector files are regenerated into
+the luce-crypto-vectors checkout from local reference checkouts (kept out of
+both repositories) by `tools/bearssl_vectors.py`, `tools/wycheproof.py`,
 `tools/openssl_vectors.py`, `tools/rfc_vectors.py` and `tools/cavp_vectors.py`;
 each directory records the SHA-256 of its sources. The tests are not a
 side-channel audit. Compiler caches default to `build/cache` (`LUCE_CACHE` can
 override this).
 See [validation](docs/VALIDATION.md) for measured scope and exclusions, and
-[provenance](NOTICE.md) for standards and unchanged NIST fixtures.
-The committed Argon2id fixture can additionally be regenerated/verified against
+[provenance](NOTICE.md) for standards and fixtures.
+The Argon2id fixture (in luce-crypto-vectors) can additionally be regenerated/verified against
 the pinned test-only reference as described in [Argon2id validation](docs/ARGON2ID_VALIDATION.md).
