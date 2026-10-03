@@ -1,0 +1,164 @@
+## Constant-time arithmetic modulo the P-256 field prime p and group order n:
+## eight little-endian 32-bit limbs in Montgomery form (R = 2^256), CIOS
+## multiplication, and branch-free addition, subtraction and final reduction.
+## Every value is kept fully reduced below its modulus. No branch or memory
+## index depends on an operand, only on the (public) modulus and exponents.
+
+## A modulus with its Montgomery constants.
+pub struct Modulus:
+    pub var m: u32[8]
+    var n0: u32
+    var r2: u32[8]
+    pub var one: u32[8]
+
+## The field prime p = 2^256 - 2^224 + 2^192 + 2^96 - 1.
+pub let field = Modulus(
+    m = [0xffffffff, 0xffffffff, 0xffffffff, 0x00000000, 0x00000000, 0x00000000, 0x00000001, 0xffffffff],
+    n0 = 0x00000001,
+    r2 = [0x00000003, 0x00000000, 0xffffffff, 0xfffffffb, 0xfffffffe, 0xffffffff, 0xfffffffd, 0x00000004],
+    one = [0x00000001, 0x00000000, 0x00000000, 0xffffffff, 0xffffffff, 0xffffffff, 0xfffffffe, 0x00000000])
+
+## The group order n.
+pub let order = Modulus(
+    m = [0xfc632551, 0xf3b9cac2, 0xa7179e84, 0xbce6faad, 0xffffffff, 0xffffffff, 0x00000000, 0xffffffff],
+    n0 = 0xee00bc4f,
+    r2 = [0xbe79eea2, 0x83244c95, 0x49bd6fa6, 0x4699799c, 0x2b6bec59, 0x2845b239, 0xf3d95620, 0x66e12d94],
+    one = [0x039cdaaf, 0x0c46353d, 0x58e8617b, 0x43190552, 0x00000000, 0x00000000, 0xffffffff, 0x00000000])
+
+## All ones when `bit` is 1, zero when it is 0.
+pub func mask(bit: u32) -> u32:
+    return 0 -% bit
+
+## out = a when `select` is all ones, b when it is zero.
+pub func choose(out: u32[], select: u32, a: const u32[], b: const u32[]):
+    for i in 0..<(usize)8:
+        out[i] = b[i] ^ (select & (a[i] ^ b[i]))
+
+## 1 when every limb is zero, else 0.
+pub func is_zero(a: const u32[]) -> u32:
+    var acc: u32 = 0
+    for i in 0..<(usize)8:
+        acc |= a[i]
+    return 1 ^ ((acc | (0 -% acc)) >> 31)
+
+## 1 when a == b, else 0.
+pub func equal(a: const u32[], b: const u32[]) -> u32:
+    var diff: u32[8]
+    for i in 0..<(usize)8:
+        diff[i] = a[i] ^ b[i]
+    return is_zero(diff)
+
+## out = a - b over 256 bits; returns the borrow (0 or 1).
+func subtract(out: u32[], a: const u32[], b: const u32[]) -> u32:
+    var borrow: u64 = 0
+    for i in 0..<(usize)8:
+        let d = (u64)a[i] -% (u64)b[i] -% borrow
+        out[i] = (u32)(d & 0xffffffff)
+        borrow = (d >> 63) & 1
+    return (u32)borrow
+
+## out = a + b over 256 bits; returns the carry (0 or 1).
+func add_raw(out: u32[], a: const u32[], b: const u32[]) -> u32:
+    var carry: u64 = 0
+    for i in 0..<(usize)8:
+        let s = (u64)a[i] + (u64)b[i] + carry
+        out[i] = (u32)(s & 0xffffffff)
+        carry = s >> 32
+    return (u32)carry
+
+## 1 when a < b (as 256-bit integers), else 0.
+pub func less(a: const u32[], b: const u32[]) -> u32:
+    var t: u32[8]
+    return subtract(t, a, b)
+
+## out = (a + b) mod m for a, b < m.
+pub func add(out: u32[], a: const u32[], b: const u32[], modulus: const Modulus*):
+    var sum: u32[8]
+    var reduced: u32[8]
+    let carry = add_raw(sum, a, b)
+    let borrow = subtract(reduced, sum, modulus.m)
+    # Keep the reduced value when the sum overflowed or did not borrow.
+    choose(out, mask(carry | (borrow ^ 1)), reduced, sum)
+
+## out = (a - b) mod m for a, b < m.
+pub func sub(out: u32[], a: const u32[], b: const u32[], modulus: const Modulus*):
+    var difference: u32[8]
+    var corrected: u32[8]
+    let borrow = subtract(difference, a, b)
+    discard(add_raw(corrected, difference, modulus.m))
+    choose(out, mask(borrow), corrected, difference)
+
+## out = a * b * R^-1 mod m (CIOS) for a, b < m.
+pub func mul(out: u32[], a: const u32[], b: const u32[], modulus: const Modulus*):
+    var t: u32[10]
+    for i in 0..<(usize)8:
+        var carry: u64 = 0
+        let bi = (u64)b[i]
+        for j in 0..<(usize)8:
+            let s = (u64)t[j] + (u64)a[j] * bi + carry
+            t[j] = (u32)(s & 0xffffffff)
+            carry = s >> 32
+        var s = (u64)t[8] + carry
+        t[8] = (u32)(s & 0xffffffff)
+        t[9] = (u32)(s >> 32)
+        let q = (u64)(t[0] *% modulus.n0)
+        s = (u64)t[0] + q * (u64)modulus.m[0]
+        carry = s >> 32
+        for j in 1..<(usize)8:
+            s = (u64)t[j] + q * (u64)modulus.m[j] + carry
+            t[j - 1] = (u32)(s & 0xffffffff)
+            carry = s >> 32
+        s = (u64)t[8] + carry
+        t[7] = (u32)(s & 0xffffffff)
+        t[8] = t[9] + (u32)(s >> 32)
+    var reduced: u32[8]
+    let borrow = subtract(reduced, t[..<8], modulus.m)
+    choose(out, mask(t[8] | (borrow ^ 1)), reduced, t[..<8])
+
+## out = a^2 * R^-1 mod m.
+pub func square(out: u32[], a: const u32[], modulus: const Modulus*):
+    mul(out, a, a, modulus)
+
+## Into Montgomery form: a * R mod m, for a < m.
+pub func to_montgomery(out: u32[], a: const u32[], modulus: const Modulus*):
+    mul(out, a, modulus.r2, modulus)
+
+## Out of Montgomery form.
+pub func from_montgomery(out: u32[], a: const u32[], modulus: const Modulus*):
+    var one: u32[8]
+    one[0] = 1
+    mul(out, a, one, modulus)
+
+## a^(m - 2) in Montgomery form: the inverse of a nonzero a (zero maps to
+## zero). The exponent is public, so the square-and-multiply is fixed.
+pub func invert(out: u32[], a: const u32[], modulus: const Modulus*):
+    var exponent: u32[8]
+    var two: u32[8]
+    two[0] = 2
+    discard(subtract(exponent, modulus.m, two))
+    var result: u32[8]
+    for i in 0..<(usize)8:
+        result[i] = modulus.one[i]
+    var i: i32 = 255
+    while i >= 0:
+        square(result, result, modulus)
+        if ((exponent[(usize)(i >> 5)] >> (u32)(i & 31)) & 1) == 1:
+            mul(result, result, a, modulus)
+        i -= 1
+    for j in 0..<(usize)8:
+        out[j] = result[j]
+
+## Big-endian 32 bytes to limbs.
+pub func decode(out: u32[], bytes: const u8[]):
+    for i in 0..<(usize)8:
+        let at = (7 - i) * 4
+        out[i] = ((u32)bytes[at] << 24) | ((u32)bytes[at + 1] << 16) | ((u32)bytes[at + 2] << 8) | (u32)bytes[at + 3]
+
+## Limbs to big-endian 32 bytes.
+pub func encode(out: u8[], a: const u32[]):
+    for i in 0..<(usize)8:
+        let v = a[7 - i]
+        out[i * 4] = (u8)(v >> 24)
+        out[i * 4 + 1] = (u8)((v >> 16) & 0xff)
+        out[i * 4 + 2] = (u8)((v >> 8) & 0xff)
+        out[i * 4 + 3] = (u8)(v & 0xff)

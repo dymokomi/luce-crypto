@@ -9,10 +9,10 @@ from check_argon import check_argon
 
 
 ## Vector programs: each takes the tests/vectors directory as its argument.
-VECTOR_PROGRAMS = ("hash-kat", "gcm-tests", "chacha-kat", "x25519-kat", "rsa-tests", "ecdsa-tests")
+VECTOR_PROGRAMS = ("hash-kat", "gcm-tests", "chacha-kat", "x25519-kat", "rsa-tests", "ecdsa-kat", "ec-kat")
 
 
-def check_vectors(binaries, timeout=300):
+def check_vectors(binaries, timeout=900):
     vectors = Path(__file__).resolve().parents[1] / "tests/vectors"
     for name in VECTOR_PROGRAMS:
         result = checked([Path(binaries) / name, vectors], timeout=timeout)

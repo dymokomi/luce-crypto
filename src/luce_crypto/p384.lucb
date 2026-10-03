@@ -66,52 +66,41 @@ func mod_add(out: u32[], a: const u32[], b: const u32[], modulus: const u32[]):
 func mod_sub(out: u32[], a: const u32[], b: const u32[], modulus: const u32[]):
     if bn_sub(out, a, b) != 0: discard(bn_add(out, out, modulus))
 
-func multiply(out: u32[], a: const u32[], b: const u32[]):
-    for i in 0..<24: out[i] = 0
-    for i in 0..<12:
-        var carry: u64
-        for j in 0..<12:
-            let value = (u64)a[i] * (u64)b[j] + (u64)out[i + j] + carry
-            out[i + j] = (u32)value
-            carry = value >> 32
-        out[i + 12] = (u32)carry
-
-func mont_reduce(out: u32[], product: const u32[], modulus: const u32[], n0: u32):
-    var work: u32[25]
-    for i in 0..<24: work[i] = product[i]
-    work[24] = 0
-    for i in 0..<12:
-        let factor = (u32)((u64)work[i] * (u64)n0)
-        var carry: u64
-        for j in 0..<12:
-            let value = (u64)factor * (u64)modulus[j] + (u64)work[i + j] + carry
-            work[i + j] = (u32)value
-            carry = value >> 32
-        var at = i + 12
-        while carry != 0 and at < 25:
-            let value = (u64)work[at] + carry
-            work[at] = (u32)value
-            carry = value >> 32
-            at += 1
-    var result: u32[12]
-    for i in 0..<12: result[i] = work[12 + i]
-    if work[24] != 0 or bn_cmp(result, modulus) >= 0: discard(bn_sub(result, result, modulus))
-    bn_copy(out, result)
-
+## Montgomery product a * b * 2^-384 mod m (CIOS: multiply and reduce one
+## limb at a time) for a, b < m.
 func mont_mul(out: u32[], a: const u32[], b: const u32[], modulus: const u32[], n0: u32):
-    var product: u32[24]
-    multiply(product, a, b)
-    mont_reduce(out, product, modulus, n0)
+    var t: u32[14]
+    for i in 0..<(usize)12:
+        var carry: u64 = 0
+        let bi = (u64)b[i]
+        for j in 0..<(usize)12:
+            let s = (u64)t[j] + (u64)a[j] * bi + carry
+            t[j] = (u32)(s & 0xffffffff)
+            carry = s >> 32
+        var s = (u64)t[12] + carry
+        t[12] = (u32)(s & 0xffffffff)
+        t[13] = (u32)(s >> 32)
+        let q = (u64)(t[0] *% n0)
+        s = (u64)t[0] + q * (u64)modulus[0]
+        carry = s >> 32
+        for j in 1..<(usize)12:
+            s = (u64)t[j] + q * (u64)modulus[j] + carry
+            t[j - 1] = (u32)(s & 0xffffffff)
+            carry = s >> 32
+        s = (u64)t[12] + carry
+        t[11] = (u32)(s & 0xffffffff)
+        t[12] = t[13] + (u32)(s >> 32)
+    if t[12] != 0 or bn_cmp(t[..<12], modulus) >= 0:
+        discard(bn_sub(t[..<12], t[..<12], modulus))
+    bn_copy(out, t[..<12])
 
 func to_mont(out: u32[], value: const u32[], r2: const u32[], modulus: const u32[], n0: u32):
     mont_mul(out, value, r2, modulus, n0)
 
 func from_mont(out: u32[], value: const u32[], modulus: const u32[], n0: u32):
-    var product: u32[24]
-    for i in 0..<12:
-        product[i] = value[i]
-        product[i + 12] = 0
-    mont_reduce(out, product, modulus, n0)
+    var one: u32[12]
+    one[0] = 1
+    mont_mul(out, value, one, modulus, n0)
 
 func mul_mod(out: u32[], a: const u32[], b: const u32[], modulus: const u32[], n0: u32, r2: const u32[]):
     var temporary: u32[12]
@@ -260,6 +249,31 @@ func scalar_mul(out: Point*, scalar: const u32[], base: const Point*):
         if bit_at(scalar, i) == 1: add(out, out, base)
         i -= 1
 
+## u*A + v*B with a joint two-bit window (Straus): a table of i*A + j*B for
+## i, j in 0..3, then two doublings and one addition per bit pair. Public
+## data only; `add` handles infinity and equal points.
+func joint_mul(out: Point*, u: const u32[], a: const Point*, v: const u32[], b: const Point*):
+    var table: Point[16]
+    infinity(&table[0])
+    point_copy(&table[1], b)
+    double(&table[2], b)
+    add(&table[3], &table[2], b)
+    point_copy(&table[4], a)
+    double(&table[8], a)
+    add(&table[12], &table[8], a)
+    for i in 1..<(usize)4:
+        for j in 1..<(usize)4:
+            add(&table[i * 4 + j], &table[i * 4], &table[j])
+    infinity(out)
+    var bit: i64 = 382
+    while bit >= 0:
+        double(out, out)
+        double(out, out)
+        let index = (usize)((bit_at(u, bit + 1) << 3) | (bit_at(u, bit) << 2) | (bit_at(v, bit + 1) << 1) | bit_at(v, bit))
+        if index != 0:
+            add(out, out, &table[index])
+        bit -= 2
+
 func bytes_to_bn(out: u32[], bytes: const u8[]):
     for i in 0..<12:
         let base = (usize)((11 - i) * 4)
@@ -347,14 +361,93 @@ pub func verify(qx: const u8[], qy: const u8[], digest: const u8[],
     bn_copy(generator.z, one_p)
     var public_key: Point
     load_point(&public_key, qx, qy)
-    var left: Point
-    var right: Point
-    scalar_mul(&left, u1, &generator)
-    scalar_mul(&right, u2, &public_key)
     var sum: Point
-    add(&sum, &left, &right)
+    joint_mul(&sum, u1, &generator, u2, &public_key)
     if is_infinity(&sum): return false
     var x: u32[12]
     affine_x(x, &sum)
     if bn_cmp(x, n_mod) >= 0: discard(bn_sub(x, x, n_mod))
     return bn_cmp(x, r) == 0
+
+func bn_to_bytes(out: u8[], value: const u32[]):
+    for i in 0..<(usize)12:
+        let v = value[11 - i]
+        out[i * 4] = (u8)(v >> 24)
+        out[i * 4 + 1] = (u8)((v >> 16) & 0xff)
+        out[i * 4 + 2] = (u8)((v >> 8) & 0xff)
+        out[i * 4 + 3] = (u8)(v & 0xff)
+
+## Affine output of a Jacobian point; false for infinity.
+func write_point(point: const Point*, out_x: u8[], out_y: u8[]) -> bool:
+    if is_infinity(point):
+        for i in 0..<(usize)48:
+            out_x[i] = 0
+            out_y[i] = 0
+        return false
+    var z_plain: u32[12]
+    from_mont(z_plain, point.z, p_mod, n0_p)
+    var z_inverse: u32[12]
+    inverse(z_inverse, z_plain, p_mod, n0_p, r2_p, one_p)
+    var zi: u32[12]
+    to_mont(zi, z_inverse, r2_p, p_mod, n0_p)
+    var zi2: u32[12]
+    mont_mul(zi2, zi, zi, p_mod, n0_p)
+    var t: u32[12]
+    var plain: u32[12]
+    mont_mul(t, point.x, zi2, p_mod, n0_p)
+    from_mont(plain, t, p_mod, n0_p)
+    bn_to_bytes(out_x, plain)
+    mont_mul(zi2, zi2, zi, p_mod, n0_p)
+    mont_mul(t, point.y, zi2, p_mod, n0_p)
+    from_mont(plain, t, p_mod, n0_p)
+    bn_to_bytes(out_y, plain)
+    return true
+
+func checked_point(x: const u8[], y: const u8[], out: Point*) -> !:
+    if x.length != 48 or y.length != 48:
+        error(sha2.invalid, "P-384 coordinates must be 48 bytes")
+    var plain_x: u32[12]
+    var plain_y: u32[12]
+    bytes_to_bn(plain_x, x)
+    bytes_to_bn(plain_y, y)
+    if bn_cmp(plain_x, p_mod) >= 0 or bn_cmp(plain_y, p_mod) >= 0 or not on_curve(plain_x, plain_y):
+        error(sha2.invalid, "P-384 point is not on the curve")
+    load_point(out, x, y)
+
+## k*(x, y) on public data (variable time) for tests and verification
+## tooling; false for the point at infinity. `k` is 48 big-endian bytes.
+pub func multiply(k: const u8[], x: const u8[], y: const u8[], out_x: u8[], out_y: u8[]) -> bool!:
+    var point: Point
+    try checked_point(x, y, &point)
+    if k.length != 48:
+        error(sha2.invalid, "P-384 scalar must be 48 bytes")
+    var scalar: u32[12]
+    bytes_to_bn(scalar, k)
+    var result: Point
+    scalar_mul(&result, scalar, &point)
+    return write_point(&result, out_x, out_y)
+
+## k*G on public data; false for the point at infinity.
+pub func multiply_generator(k: const u8[], out_x: u8[], out_y: u8[]) -> bool!:
+    var gx: u8[48]
+    var gy: u8[48]
+    bn_to_bytes(gx, g_x)
+    bn_to_bytes(gy, g_y)
+    return try multiply(k, gx, gy, out_x, out_y)
+
+## u*A + v*B on public data; false for the point at infinity.
+pub func multiply_add(ax: const u8[], ay: const u8[], u: const u8[], bx: const u8[], by: const u8[], v: const u8[],
+    out_x: u8[], out_y: u8[]) -> bool!:
+    var a: Point
+    var b: Point
+    try checked_point(ax, ay, &a)
+    try checked_point(bx, by, &b)
+    if u.length != 48 or v.length != 48:
+        error(sha2.invalid, "P-384 scalars must be 48 bytes")
+    var su: u32[12]
+    var sv: u32[12]
+    bytes_to_bn(su, u)
+    bytes_to_bn(sv, v)
+    var sum: Point
+    joint_mul(&sum, su, &a, sv, &b)
+    return write_point(&sum, out_x, out_y)

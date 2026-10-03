@@ -212,6 +212,14 @@ def curves(src):
     for args in calls(src, "test_EC_P256_carry_inner"):
         if isinstance(single(args[1]), Str):
             lines.append(f"p256carry {single(args[1])} {single(args[2])}")
+    # test_EC_inner's multiply-add identities: per curve, ten rounds of
+    # a, b, x, y drawn from HMAC_DRBG("seed for EC") as 80 bytes reduced mod n.
+    for curve, order in (("secp256r1", N256), ("secp384r1", N384)):
+        rng, width = Drbg(b"seed for EC"), (order.bit_length() + 7) // 8
+        for _ in range(10):
+            a, b, x, y = (int.from_bytes(rng.generate(80), "big") % order for _ in range(4))
+            values = (a, b, x, y, (a * x + b * y) % order, (2 * a * x) % order, (order - a) % order)
+            lines.append(f"muladd {curve} " + " ".join(v.to_bytes(width, "big").hex() for v in values))
     write("ec.txt", lines)
 
 
@@ -254,6 +262,10 @@ def rsa(src):
                      r'.*?hextobin\(sig, "([0-9A-F]+)"\).*?hextobin\(hv2, "([0-9A-F]+)"\)', src, re.S)
     lines += [f"key {sign.group(1)} {sign.group(2)}", f"pkcs1 sha512 {sign.group(4)} {sign.group(3)}"]
     write("rsa_pkcs1.txt", lines)
+
+
+N256 = 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551
+N384 = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFC7634D81F4372DDF581A0DB248B0A77AECEC196ACCC52973
 
 
 class Drbg:

@@ -102,3 +102,76 @@ func nibble(digit: u8) -> u8!:
     if digit >= 'a' and digit <= 'f': return digit - 'a' + 10
     if digit >= 'A' and digit <= 'F': return digit - 'A' + 10
     error(sha2.invalid, "vector field is not hex")
+
+## Strictly decode a DER Ecdsa-Sig-Value into fixed-width big-endian r and s;
+## false when it is not minimal DER or a value is wider than the outputs.
+pub func ecdsa_from_der(der: const u8[], r: u8[], s: u8[]) -> bool:
+    if der.length < 8 or der[0] != 0x30:
+        return false
+    var at: usize = 2
+    var length = (usize)der[1]
+    if der[1] == 0x81:
+        if der[2] < 0x80:
+            return false
+        length = (usize)der[2]
+        at = 3
+    elif der[1] >= 0x80:
+        return false
+    if length != der.length - at:
+        return false
+    let after_r = der_integer(der, at, r) else return false
+    let after_s = der_integer(der, after_r, s) else return false
+    return after_s == der.length
+
+func der_integer(der: const u8[], at: usize, out: u8[]) -> usize?:
+    if der.length - at < 3 or der[at] != 0x02 or der[at + 1] >= 0x80:
+        return none
+    let length = (usize)der[at + 1]
+    let start = at + 2
+    if length == 0 or length > der.length - start or (der[start] & 0x80) != 0:
+        return none
+    if length > 1 and der[start] == 0 and der[start + 1] < 0x80:
+        return none
+    var first = start
+    var count = length
+    if count > 1 and der[first] == 0:
+        first += 1
+        count -= 1
+    if count > out.length:
+        return none
+    for i in 0..<out.length:
+        out[i] = 0
+    for i in 0..<count:
+        out[out.length - count + i] = der[first + i]
+    return start + length
+
+## DER-encode (r, s) into `out`; returns its length.
+pub func ecdsa_to_der(r: const u8[], s: const u8[], out: u8[]) -> usize:
+    var body: u8[140]
+    var used: usize = 0
+    for part in 0..<(usize)2:
+        let value = r if part == 0 else s
+        var first: usize = 0
+        while first + 1 < value.length and value[first] == 0:
+            first += 1
+        let sign = value[first] >= 0x80
+        body[used] = 0x02
+        body[used + 1] = (u8)(value.length - first + (1 if sign else 0))
+        used += 2
+        if sign:
+            body[used] = 0
+            used += 1
+        for i in first..<value.length:
+            body[used] = value[i]
+            used += 1
+    var at: usize = 0
+    out[at] = 0x30
+    at += 1
+    if used >= 0x80:
+        out[at] = 0x81
+        at += 1
+    out[at] = (u8)used
+    at += 1
+    for i in 0..<used:
+        out[at + i] = body[i]
+    return at + used
