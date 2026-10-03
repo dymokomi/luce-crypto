@@ -1,0 +1,238 @@
+## RSA verification vectors: BearSSL's raw public-operation, PKCS#1 v1.5 and
+## RSASSA-PSS (pkcs-1v2-1) known answers and its modular exponentiation inputs
+## (10 to 500-bit moduli), the complete Wycheproof rsa_signature files for
+## 2048/3072/4096/8192-bit keys with SHA-256/384/512 and every RSASSA-PSS file
+## over SHA-1/SHA-2 hashes, and OpenSSL's RSA verification stanzas. Vectors
+## with hashes this package lacks (MD5-SHA1, SHA-512/224) are counted out of
+## scope. Test keys below 2048 bits are admitted with `smallest = 1024`.
+import luce_crypto.bignum as bignum
+import luce_crypto.rsa as rsa
+import luce_crypto.sha1 as sha1
+import luce_crypto.sha2 as sha2
+import luce_crypto.vector_file as vector_file
+
+func same(a: const u8[], b: const u8[]) -> bool:
+    if a.length != b.length: return false
+    for i in 0..<a.length:
+        if a[i] != b[i]: return false
+    return true
+
+func text(field: const u8[]) -> str:
+    return (str)field
+
+## The digest of `message`; zero for a hash this package lacks.
+func message_digest(name: str, message: const u8[], out: u8[]) -> usize!:
+    if name == "sha1":
+        return try sha1.digest(message, out)
+    if name == "sha224" or name == "sha256" or name == "sha384" or name == "sha512":
+        return try sha2.digest(message, out, name)
+    return 0
+
+func supported(name: str) -> bool:
+    return name == "sha1" or name == "sha224" or name == "sha256" or name == "sha384" or name == "sha512"
+
+struct Counts:
+    var passed: usize
+    var rejected: usize
+    var out_of_scope: usize
+
+func bearssl(directory: str, counts: Counts*) -> !:
+    var lines = try vector_file.Lines.open(directory, "bearssl/rsa_pss.txt")
+    var n: u8[512]
+    var e: u8[8]
+    var key = rsa.PublicKey()
+    while lines.next():
+        if try lines.is(0, "key"):
+            let a = try lines.decode(1, n)
+            let b = try lines.decode(2, e)
+            key = try rsa.public_key(n[..<a], e[..<b], 1024)
+            continue
+        var message: u8[512]
+        var salt: u8[64]
+        var signature: u8[512]
+        var digest: u8[20]
+        let m = try lines.decode(1, message)
+        let s = try lines.decode(2, salt)
+        let k = try lines.decode(3, signature)
+        discard(try sha1.digest(message[..<m], digest))
+        assert(try rsa.verify_pss(&key, "sha1", digest, signature[..<k], s), "BearSSL PSS KAT rejected")
+        assert(try rsa.verify_pss(&key, "sha1", digest, signature[..<k], rsa.any_salt), "BearSSL PSS KAT rejected (auto salt)")
+        signature[k // 2] ^= 1
+        assert(not (try rsa.verify_pss(&key, "sha1", digest, signature[..<k], s)), "BearSSL PSS tampered signature accepted")
+        counts.passed += 1
+    lines.close()
+    lines = try vector_file.Lines.open(directory, "bearssl/rsa_pkcs1.txt")
+    defer lines.close()
+    var modulus = bignum.Natural()
+    while lines.next():
+        if try lines.is(0, "key"):
+            let a = try lines.decode(1, n)
+            let b = try lines.decode(2, e)
+            key = try rsa.public_key(n[..<a], e[..<b], 1024)
+            modulus = try bignum.Natural.from_bytes(n[..<a])
+            continue
+        var first: u8[128]
+        var second: u8[128]
+        if try lines.is(0, "public"):
+            let size = try lines.decode(1, first)
+            discard(try lines.decode(2, second))
+            let base = try bignum.Natural.from_bytes(first[..<size])
+            let result = try bignum.modular_power(&base, e[..<3], &modulus)
+            var out: u8[128]
+            try result.to_bytes(out[..<size])
+            assert(same(out[..<size], second[..<size]), "BearSSL RSA public operation mismatch")
+        else:
+            let h = try lines.decode(2, first)
+            let k = try lines.decode(3, second)
+            let algorithm = text(try lines.field(1))
+            assert(try rsa.verify_pkcs1(&key, algorithm, first[..<h], second[..<k]), "BearSSL PKCS#1 KAT rejected")
+            first[5] ^= 1
+            assert(not (try rsa.verify_pkcs1(&key, algorithm, first[..<h], second[..<k])), "PKCS#1 accepted a changed digest")
+        counts.passed += 1
+
+func modpow(directory: str) -> usize!:
+    var lines = try vector_file.Lines.open(directory, "bearssl/modpow.txt")
+    defer lines.close()
+    var count: usize = 0
+    while lines.next():
+        var m: u8[64]
+        var x: u8[64]
+        var e: u8[64]
+        var expected: u8[64]
+        let size = try lines.decode(0, m)
+        discard(try lines.decode(1, x))
+        discard(try lines.decode(2, e))
+        discard(try lines.decode(3, expected))
+        let modulus = try bignum.Natural.from_bytes(m[..<size])
+        let base = try bignum.Natural.from_bytes(x[..<size])
+        let result = try bignum.modular_power(&base, e[..<size], &modulus)
+        var out: u8[64]
+        try result.to_bytes(out[..<size])
+        assert(same(out[..<size], expected[..<size]), "modular exponentiation mismatch")
+        count += 1
+    return count
+
+## One Wycheproof file. PKCS#1 files have "key N E" lines; PSS files add the
+## hash, MGF hash and salt length.
+func wycheproof(directory: str, name: str, pss: bool, hash_name: str, counts: Counts*) -> !:
+    var lines = try vector_file.Lines.open(directory, name)
+    defer lines.close()
+    var key = rsa.PublicKey()
+    var algorithm = hash_name
+    var mask = hash_name
+    var salt: usize = 0
+    var usable = true
+    var n: u8[1100]
+    var e: u8[16]
+    while lines.next():
+        if try lines.is(0, "key"):
+            let a = try lines.decode(1, n)
+            let b = try lines.decode(2, e)
+            key = try rsa.public_key(n[..<a], e[..<b], 1024)
+            if pss:
+                algorithm = text(try lines.field(3))
+                mask = text(try lines.field(4))
+                let digits = try lines.field(5)
+                salt = 0
+                for i in 0..<digits.length: salt = salt * 10 + (usize)(digits[i] - '0')
+            usable = supported(algorithm) and supported(mask)
+            continue
+        if not usable:
+            counts.out_of_scope += 1
+            continue
+        var message: u8[4096]
+        var signature: u8[2048]
+        var digest: u8[64]
+        let m = try lines.decode(1, message)
+        let k = try lines.decode(2, signature)
+        let d = try message_digest(algorithm, message[..<m], digest)
+        var accepted = false
+        if pss:
+            accepted = try rsa.verify_pss(&key, algorithm, digest[..<d], signature[..<k], salt, mask)
+        else:
+            accepted = try rsa.verify_pkcs1(&key, algorithm, digest[..<d], signature[..<k])
+        if try lines.is(0, "valid"):
+            assert(accepted, "valid Wycheproof RSA signature rejected")
+            counts.passed += 1
+        else:
+            # "acceptable" PKCS#1 cases omit the NULL parameters; they are refused.
+            assert(not accepted, "invalid Wycheproof RSA signature accepted")
+            counts.rejected += 1
+
+func openssl(directory: str, counts: Counts*) -> !:
+    var lines = try vector_file.Lines.open(directory, "openssl/rsa.txt")
+    defer lines.close()
+    while lines.next():
+        let algorithm = text(try lines.field(3))
+        let mask = text(try lines.field(4))
+        if not supported(algorithm) or not supported(mask):
+            counts.out_of_scope += 1
+            continue
+        var n: u8[512]
+        var e: u8[8]
+        let a = try lines.decode(1, n)
+        let b = try lines.decode(2, e)
+        let key = try rsa.public_key(n[..<a], e[..<b], 1024)
+        var input: u8[512]
+        var signature: u8[512]
+        var digest: u8[512]
+        let m = try lines.decode(7, input)
+        let k = try lines.decode(8, signature)
+        var d = m
+        if try lines.is(6, "1"):
+            for i in 0..<m: digest[i] = input[i]
+        else:
+            d = try message_digest(algorithm, input[..<m], digest)
+        var accepted = false
+        if try lines.is(0, "pss"):
+            var salt = rsa.any_salt
+            if not (try lines.is(5, "auto")):
+                let digits = try lines.field(5)
+                salt = 0
+                for i in 0..<digits.length: salt = salt * 10 + (usize)(digits[i] - '0')
+            accepted = try rsa.verify_pss(&key, algorithm, digest[..<d], signature[..<k], salt, mask)
+        else:
+            accepted = try rsa.verify_pkcs1(&key, algorithm, digest[..<d], signature[..<k])
+        if try lines.is(9, "ok"):
+            assert(accepted, "OpenSSL RSA signature rejected")
+            counts.passed += 1
+        else:
+            assert(not accepted, "OpenSSL RSA error case accepted")
+            counts.rejected += 1
+
+## Optional argument: the vector directory (default tests/vectors).
+pub func main(arguments: str[]) -> i32!:
+    let directory = arguments[1] if arguments.length > 1 else "tests/vectors"
+    var kat = Counts()
+    try bearssl(directory, &kat)
+    let powers = try modpow(directory)
+    var wp = Counts()
+    for bits in ["2048", "3072", "4096", "8192"]:
+        for hash_name in ["sha256", "sha384", "sha512"]:
+            var name: u8[64]
+            var at: usize = 0
+            for part in ["wycheproof/rsa_signature_", bits, "_", hash_name, ".txt"]:
+                for i in 0..<part.length:
+                    name[at + i] = part.bytes[i]
+                at += part.length
+            try wycheproof(directory, (str)name[..<at], false, hash_name, &wp)
+    for file in ["rsa_pss_2048_sha256_mgf1_0", "rsa_pss_2048_sha256_mgf1_32", "rsa_pss_2048_sha256_mgf1sha1_20",
+                 "rsa_pss_2048_sha384_mgf1_48", "rsa_pss_3072_sha256_mgf1_32", "rsa_pss_4096_sha256_mgf1_32",
+                 "rsa_pss_4096_sha384_mgf1_48", "rsa_pss_4096_sha512_mgf1_32", "rsa_pss_4096_sha512_mgf1_64",
+                 "rsa_pss_misc", "rsa_pss_2048_sha256_mgf1_0_params", "rsa_pss_2048_sha256_mgf1_32_params",
+                 "rsa_pss_2048_sha512_mgf1sha256_32_params", "rsa_pss_3072_sha256_mgf1_32_params",
+                 "rsa_pss_4096_sha512_mgf1_32_params", "rsa_pss_4096_sha512_mgf1_64_params", "rsa_pss_misc_params"]:
+        var name: u8[96]
+        var at: usize = 0
+        for part in ["wycheproof/", file, ".txt"]:
+            for i in 0..<part.length:
+                name[at + i] = part.bytes[i]
+            at += part.length
+        try wycheproof(directory, (str)name[..<at], true, "", &wp)
+    var ossl = Counts()
+    try openssl(directory, &ossl)
+    assert(kat.passed == 64 and powers == 491, "unexpected BearSSL RSA counts")
+    assert(wp.passed == 1739 and wp.rejected == 3693 and wp.out_of_scope == 0, "unexpected Wycheproof RSA counts")
+    assert(ossl.passed == 67 and ossl.rejected == 13 and ossl.out_of_scope == 6, "unexpected OpenSSL RSA counts")
+    print(f"PASS RSA: BearSSL {kat.passed} + {powers} modpow, Wycheproof {wp.passed} valid, {wp.rejected} refused (+{wp.out_of_scope} other hashes), OpenSSL {ossl.passed} ok, {ossl.rejected} errors (+{ossl.out_of_scope} other hashes)")
+    return 0

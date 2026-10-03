@@ -19,6 +19,9 @@ SUMMARY.txt so the README can list them. Fields are hex, "-" for empty and
   ecdh.txt     derive RESULT PRIVATE PEERX PEERY SHARED | keypair RESULT PRIVATE X Y   (P-256)
   ecdsa.txt    verify CURVE HASH X Y DIGEST SIG RESULT | digestverify CURVE HASH X Y MSG SIG RESULT
                | digestsign CURVE HASH PRIVATE MSG SIG | keypair CURVE RESULT PRIVATE X Y
+  rsa.txt      PADDING N E HASH MGFHASH SALT PREHASHED INPUT SIG RESULT
+               (PADDING pkcs1 or pss; SALT a byte count or "auto"; PREHASHED 1 when
+               INPUT is the digest, 0 when it is the message)
 """
 import base64
 import collections
@@ -80,6 +83,13 @@ def value_hex(text):
     if text.startswith('"'):
         return text.strip('"').encode().hex() or "-"
     return text.lower() or "-"
+
+
+def input_hex(stanza):
+    """All Input values of a stanza, concatenated (OpenSSL feeds them in turn)."""
+    parts = [value_hex(item[1]) for item in stanza if item[0] == "Input"]
+    joined = "".join(p for p in parts if p != "-")
+    return joined or ("-" if parts else "absent")
 
 
 def ctrl_hex(text):
@@ -322,12 +332,65 @@ def ecdsa(source, summary):
                 summary[f"{name}: {operation} on {key.kind} (only deterministic P-256 signing is implemented)"] += 1
                 continue
             if operation == "DigestSign":
-                lines.append(f"digestsign {key.kind} {hash_name} {scalar_hex(key)} {value_hex(get(stanza, 'Input'))} {value_hex(get(stanza, 'Output'))}")
+                lines.append(f"digestsign {key.kind} {hash_name} {scalar_hex(key)} {input_hex(stanza)} {value_hex(get(stanza, 'Output'))}")
                 continue
             xy = point_xy(key)
             kind = "verify" if operation == "Verify" else "digestverify"
-            lines.append(f"{kind} {key.kind} {hash_name} {xy[0]} {xy[1]} {value_hex(get(stanza, 'Input'))} "
+            lines.append(f"{kind} {key.kind} {hash_name} {xy[0]} {xy[1]} {input_hex(stanza)} "
                          f"{value_hex(get(stanza, 'Output'))} {result}")
+    return lines
+
+
+def rsa(source, summary):
+    lines = []
+    for name in ("evppkey_rsa.txt", "evppkey_rsa_common.txt"):
+        blocks = stanzas(source / name)
+        keys = keys_of(blocks)
+        for stanza in blocks:
+            operation = next((op for op in ("Verify", "DigestVerify", "OneShotDigestVerify", "VerifyRecover",
+                                            "Sign", "DigestSign", "Decrypt", "Encrypt") if get(stanza, op) is not None), None)
+            if operation is None:
+                continue
+            if operation not in ("Verify", "DigestVerify", "OneShotDigestVerify"):
+                summary[f"{name}: RSA {operation} (only verification is implemented)"] += 1
+                continue
+            if provider_only(stanza) or get(stanza, "Availablein") == "legacy":
+                summary[f"{name}: FIPS- or legacy-provider-only checks"] += 1
+                continue
+            controls = {}
+            for item in stanza:
+                if item[0] in ("Ctrl", "CtrlInit"):
+                    key, _, value = item[1].partition(":")
+                    controls[key] = value
+            key = keys.get(get(stanza, "Key") if operation != "Verify" else get(stanza, "Verify"))
+            if key is None:
+                summary[f"{name}: verification with a key generated during the test run"] += 1
+                continue
+            if key.kind not in ("rsa", "rsa-pss"):
+                summary[f"{name}: verification with a {key.kind} key"] += 1
+                continue
+            if key.kind == "rsa-pss":
+                summary[f"{name}: RSASSA-PSS-restricted keys (key-embedded parameters are not modelled)"] += 1
+                continue
+            padding = controls.get("rsa_padding_mode", "pkcs1")
+            hash_name = controls.get("digest") or (get(stanza, operation) if operation != "Verify" else None)
+            if hash_name is None and padding == "pss":
+                hash_name = "sha1"  # OpenSSL's RSA-PSS default digest (RFC 4055)
+            if padding not in ("pkcs1", "pss") or hash_name is None:
+                summary[f"{name}: RSA {padding} padding{'' if hash_name else ' without a digest'} (not implemented)"] += 1
+                continue
+            hash_name = DIGESTS.get(hash_name.lower(), hash_name.lower())
+            mgf_name = controls.get("rsa_mgf1_md", hash_name).lower()
+            mgf = DIGESTS.get(mgf_name, mgf_name)
+            salt = controls.get("rsa_pss_saltlen", "auto")
+            if salt in ("auto", "max", "auto-digestmax"):
+                salt = "auto"
+            elif salt == "digest":
+                salt = str(hashlib.new(hash_name).digest_size) if hash_name in DIGESTS.values() else "auto"
+            n, e = key.public
+            lines.append(f"{padding} {n.lstrip(bytes(1)).hex()} {e.lstrip(bytes(1)).hex()} {hash_name} {mgf} {salt} "
+                         f"{1 if operation == 'Verify' else 0} {input_hex(stanza)} "
+                         f"{value_hex(get(stanza, 'Output'))} {get(stanza, 'Result', 'ok')}")
     return lines
 
 
@@ -442,14 +505,14 @@ def main():
     OUT.mkdir(parents=True, exist_ok=True)
     summary = collections.Counter()
     for name, convert in (("digest", digest), ("hmac", hmac), ("hkdf", hkdf), ("cipher", cipher),
-                          ("x25519", x25519), ("ecdh", ecdh), ("ecdsa", ecdsa)):
+                          ("x25519", x25519), ("ecdh", ecdh), ("ecdsa", ecdsa), ("rsa", rsa)):
         lines = convert(source, summary)
         (OUT / f"{name}.txt").write_text("\n".join(lines) + "\n")
         print(f"{name}.txt: {len(lines)} cases")
     (OUT / "SUMMARY.txt").write_text("".join(f"{count} {what}\n" for what, count in sorted(summary.items())))
     used = ["evpmd_sha.txt", "evpmac_common.txt", "evpkdf_hkdf.txt", "evppkey_kdf_hkdf.txt",
             "evpciph_aes_common.txt", "evpciph_chacha.txt", "evppkey_ecx.txt", "evppkey_ecdh.txt",
-            "evppkey_ecdsa.txt", "evppkey_ecdsa_rfc6979.txt"]
+            "evppkey_ecdsa.txt", "evppkey_ecdsa_rfc6979.txt", "evppkey_rsa.txt", "evppkey_rsa_common.txt"]
     (OUT / "SOURCE-SHA256SUMS").write_text(
         "".join(f"{hashlib.sha256((source / n).read_bytes()).hexdigest()}  {n}\n" for n in used))
 

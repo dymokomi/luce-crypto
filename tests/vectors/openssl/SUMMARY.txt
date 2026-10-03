@@ -77,3 +77,17 @@
 5 evppkey_ecx.txt: x448 derive (curve not implemented)
 6 evppkey_ecx.txt: x448/x448 key pair (curve not implemented)
 2 evppkey_kdf_hkdf.txt: FIPS-provider-only policy checks
+6 evppkey_rsa.txt: FIPS- or legacy-provider-only checks
+1 evppkey_rsa.txt: RSA Decrypt (only verification is implemented)
+3 evppkey_rsa.txt: RSA DigestSign (only verification is implemented)
+5 evppkey_rsa.txt: RSA Sign (only verification is implemented)
+6 evppkey_rsa.txt: RSA VerifyRecover (only verification is implemented)
+1 evppkey_rsa.txt: RSASSA-PSS-restricted keys (key-embedded parameters are not modelled)
+13 evppkey_rsa_common.txt: FIPS- or legacy-provider-only checks
+124 evppkey_rsa_common.txt: RSA Decrypt (only verification is implemented)
+17 evppkey_rsa_common.txt: RSA DigestSign (only verification is implemented)
+13 evppkey_rsa_common.txt: RSA Sign (only verification is implemented)
+6 evppkey_rsa_common.txt: RSA VerifyRecover (only verification is implemented)
+2 evppkey_rsa_common.txt: RSA none padding without a digest (not implemented)
+11 evppkey_rsa_common.txt: RSASSA-PSS-restricted keys (key-embedded parameters are not modelled)
+3 evppkey_rsa_common.txt: verification with a key generated during the test run

@@ -115,3 +115,8 @@ constant-time table scan) follows BearSSL `ec_p256_m31.c` (MIT, Copyright (c)
 curve constants by `tools/p256_table.py`. ECDSA nonces follow RFC 6979 §3.2,
 as BearSSL's `ecdsa_i31_sign_raw` does. Verification uses a joint two-bit
 window (Straus); P-384 multiplication uses CIOS Montgomery products.
+
+RSA verification checks follow BearSSL `rsa_i31_pkcs1_vrfy.c`/`rsa_i31_pss_vrfy.c`
+and OpenSSL `crypto/rsa/rsa_pss.c` (`RSA_verify_PKCS1_PSS_mgf1`); the
+exponentiation reuses a per-key Montgomery context and computes R^2 mod n
+from R mod n by doublings and Montgomery squarings.

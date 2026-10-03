@@ -65,14 +65,15 @@ pub func compare(a: const Natural*, b: const Natural*) -> i32:
         i -= 1
     return 0
 
-## Montgomery arithmetic modulo an odd `modulus` with R = 2^(32·size).
-struct Montgomery:
+## Montgomery arithmetic modulo an odd `modulus` with R = 2^(32·size). Create
+## it once per modulus and reuse it for every exponentiation.
+pub struct Montgomery:
     var modulus: Natural
     var n0: u32
     var r2: Natural
 
     ## Precompute -n^-1 mod 2^32 and R^2 mod n.
-    static func create(modulus: const Natural*) -> Montgomery!:
+    pub static func create(modulus: const Natural*) -> Montgomery!:
         if (modulus.limbs[0] & 1) == 0 or modulus.bit_length() < 2:
             error(sha2.invalid, "Montgomery modulus must be odd and greater than one")
         var context = Montgomery(modulus = *modulus)
@@ -83,18 +84,25 @@ struct Montgomery:
         for _ in 0..<(usize)5:
             inverse = inverse *% (2 -% n *% inverse)
         context.n0 = 0 -% inverse
-        # R^2 mod n by doubling 1 a total of 2·32·size times.
+        # R mod n: start below n at 2^(bits-1) and double up to 2^(32·size).
         let size = context.modulus.size
+        let bits = context.modulus.bit_length()
         var value = Natural(size = size)
-        value.limbs[0] = 1
-        for _ in 0..<2 * 32 * size:
-            var carry: u32 = 0
-            for j in 0..<size:
-                let next = value.limbs[j] >> 31
-                value.limbs[j] = (value.limbs[j] << 1) | carry
-                carry = next
-            if carry != 0 or compare(&value, &context.modulus) >= 0:
-                subtract(&value, &context.modulus)
+        value.limbs[(bits - 1) // 32] = (u32)1 << (u32)((bits - 1) % 32)
+        for _ in 0..<32 * size - (bits - 1):
+            double_mod(&value, &context.modulus)
+        # With 32·size = c·2^j (c odd): c more doublings give 2^c·R, the
+        # Montgomery form of 2^c, and j Montgomery squarings raise it to
+        # 2^(32·size) = R, whose Montgomery form is R^2 mod n.
+        var odd = 32 * size
+        var squarings: usize = 0
+        while odd % 2 == 0:
+            odd = odd // 2
+            squarings += 1
+        for _ in 0..<odd:
+            double_mod(&value, &context.modulus)
+        for _ in 0..<squarings:
+            context.multiply(&value, &value, &value)
         context.r2 = value
         return context
 
@@ -129,6 +137,16 @@ struct Montgomery:
             subtract(&result, &self.modulus)
         *out = result
 
+## a = 2a mod n for a < n.
+func double_mod(a: Natural*, modulus: const Natural*):
+    var carry: u32 = 0
+    for j in 0..<a.size:
+        let next = a.limbs[j] >> 31
+        a.limbs[j] = (a.limbs[j] << 1) | carry
+        carry = next
+    if carry != 0 or compare(a, modulus) >= 0:
+        subtract(a, modulus)
+
 ## a -= b, assuming a >= b (or that the borrow cancels a carry out of `a`).
 func subtract(a: Natural*, b: const Natural*):
     var borrow: u64 = 0
@@ -146,22 +164,31 @@ func subtract(a: Natural*, b: const Natural*):
 ## be below the odd modulus. The result has the modulus's limb count.
 pub func modular_power(base: const Natural*, exponent: const u8[], modulus: const Natural*) -> Natural!:
     let context = try Montgomery.create(modulus)
+    return try power(&context, base, exponent)
+
+## base^exponent modulo the context's modulus, by left-to-right square and
+## multiply from the exponent's leading one bit (public exponents only).
+pub func power(context: const Montgomery*, base: const Natural*, exponent: const u8[]) -> Natural!:
     if compare(base, &context.modulus) >= 0:
         error(sha2.invalid, "base must be below the modulus")
     var reduced = *base
     reduced.size = context.modulus.size
-    var power = Natural(size = context.modulus.size)
-    context.multiply(&power, &reduced, &context.r2)
+    var factor = Natural(size = context.modulus.size)
+    context.multiply(&factor, &reduced, &context.r2)
     var one = Natural(size = context.modulus.size)
     one.limbs[0] = 1
     var result = Natural()
     context.multiply(&result, &one, &context.r2)
+    var started = false
     for i in 0..<exponent.length:
         var bit: i32 = 7
         while bit >= 0:
-            context.multiply(&result, &result, &result)
-            if ((exponent[i] >> (u8)bit) & 1) != 0:
-                context.multiply(&result, &result, &power)
+            let set = ((exponent[i] >> (u8)bit) & 1) != 0
+            if started:
+                context.multiply(&result, &result, &result)
+            if set:
+                context.multiply(&result, &result, &factor)
+                started = true
             bit -= 1
     context.multiply(&result, &result, &one)
     return result
