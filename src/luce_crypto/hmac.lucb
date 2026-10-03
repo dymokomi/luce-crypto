@@ -1,4 +1,4 @@
-## RFC 2104 HMAC with SHA-256/384/512. Context never returns key-derived values
+## RFC 2104 HMAC with SHA-224/256/384/512. Context never returns key-derived values
 ## by value and never calls the non-consuming hash snapshot API.
 import memory
 import luce_crypto.sha2 as sha2
@@ -16,7 +16,7 @@ pub struct Context:
         self.inner = try sha2.make_hash(algorithm)
         self.outer = try sha2.make_hash(algorithm)
         self.count = try self.inner.digest_size()
-        let block: usize = 64 if self.count == 32 else 128
+        let block: usize = 64 if self.count <= 32 else 128
         var key_block: u8[128]
         defer secure.wipe(key_block)
         if key.length > block:

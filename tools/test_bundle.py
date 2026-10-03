@@ -16,7 +16,7 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     programs = ["x25519", "p256", "native", "facade", "driver", "file-driver", "keyed-native", "keyed-failures", "keyed-driver", "memory-probe"]
-    programs += ["blake-driver", "argon-driver", "argon-failures", "aead-tests", "gcm-tests", "rsa-tests", "ecdsa-tests", "shake-tests", "mldsa-tests", "mldsa-interop"]
+    programs += ["blake-driver", "argon-driver", "argon-failures", "aead-tests", "hash-kat", "gcm-tests", "rsa-tests", "ecdsa-tests", "shake-tests", "mldsa-tests", "mldsa-interop"]
     scripts = ["run_prebuilt.py", "check_hashes.py", "test_vectors.py", "check_keyed.py", "rfc_keyed.py", "test_keyed.py"]
     scripts += ["check_blake.py", "check_argon.py", "test_argon.py", "check_mldsa.py"]
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
@@ -29,8 +29,9 @@ def main():
             manifest.append(f"{hashlib.sha256(data).hexdigest()}  {name}\n")
         for name in programs: add(f"bin/{name}", (args.binaries / name).read_bytes(), 0o755)
         for name in scripts: add(f"tests/{name}", (ROOT / "tests" / name).read_bytes())
-        for path in sorted((ROOT / "tests/vectors").iterdir()):
-            add(f"tests/vectors/{path.name}", path.read_bytes())
+        for path in sorted((ROOT / "tests/vectors").rglob("*")):
+            if path.is_file():
+                add(f"tests/vectors/{path.relative_to(ROOT / 'tests/vectors')}", path.read_bytes())
         for name in ["LICENSE", "LICENSE-MIT", "LICENSE-APACHE", "NOTICE.md"]:
             add(name, (ROOT / name).read_bytes())
         add("REVISION", (revision + "\n").encode())

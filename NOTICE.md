@@ -69,7 +69,16 @@ permission granted under the MIT license.
 RSA verification follows RFC 8017 (§8.1.2, §8.2.2, §9.1.2, §9.2, §B.2.1); the
 Montgomery multiplication is the CIOS method (Koç, Acar, Kaliski 1996).
 
-`tests/vectors/wycheproof_*.txt` are converted by `tools/wycheproof.py` from
-Project Wycheproof test vectors (https://github.com/C2SP/wycheproof, revision
-3fa63dd0344abb611f1fb1d77e119938603ea230, Apache-2.0), dropping cases marked
-"acceptable" and AES-GCM nonce sizes other than 96 bits. They are test data only.
+`tests/vectors/wycheproof/*.txt` are converted by `tools/wycheproof.py` from
+Project Wycheproof (https://github.com/C2SP/wycheproof, Apache-2.0), revision
+3fa63dd0344abb611f1fb1d77e119938603ea230, retrieved 2026-10-02. Every test of
+each listed file is kept. SHA-256 sums of the source JSON files are in
+`tests/vectors/wycheproof/SOURCE-SHA256SUMS`. Test data only.
+
+`tests/vectors/bearssl/*.txt` are extracted by `tools/bearssl_vectors.py` from
+BearSSL `test/test_crypto.c` (https://www.bearssl.org/, revision
+7bea48e5e850ab4cafbe68d3765cdaba13a86d6f, retrieved 2026-10-02; MIT license,
+Copyright (c) 2016 Thomas Pornin). Only the known-answer data is taken; the
+modpow inputs come from the same HMAC_DRBG seed BearSSL uses, with results
+computed by Python. SHA-256 sums: `tests/vectors/bearssl/SOURCE-SHA256SUMS`.
+Test data only; no BearSSL code is included.

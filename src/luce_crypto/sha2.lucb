@@ -1,4 +1,4 @@
-## Byte-oriented SHA-256/384/512, implemented directly from FIPS 180-4.
+## Byte-oriented SHA-224/256/384/512, implemented directly from FIPS 180-4.
 ## Value state: no allocation, borrowed pointers, global mutable state or FFI.
 import luce_crypto.constants as constants
 import luce_crypto.secure as secure
@@ -127,16 +127,20 @@ pub struct Hash:
         if self.disposed: error(closed, "hash is closed or uninitialized")
         return (usize)(self.kind // 8)
 
+    ## SHA-224 and SHA-256 use 32-bit words and 64-byte blocks.
+    func small() -> bool:
+        return self.kind == 224 or self.kind == 256
+
     func block_size() -> usize:
-        return 64 if self.kind == 256 else 128
+        return 64 if self.small() else 128
 
     mutating func block(input: const u8[]):
-        if self.kind == 256: block32(self.h32, input)
+        if self.small(): block32(self.h32, input)
         else: block64(self.h64, input)
 
     pub mutating func update(input: const u8[]) -> !:
         if self.disposed: error(closed, "hash is closed or uninitialized")
-        let length = try add_length(self.length, (u64)input.length, self.kind == 256)
+        let length = try add_length(self.length, (u64)input.length, self.small())
         let size = self.block_size()
         var at: usize
         if self.used != 0:
@@ -176,7 +180,7 @@ pub struct Hash:
 
     mutating func finalize(output: u8[], count: usize):
         let size = self.block_size()
-        let tail: usize = 8 if self.kind == 256 else 16
+        let tail: usize = 8 if self.small() else 16
         self.buffer[self.used] = 128
         self.used += 1
         if self.used > size - tail:
@@ -187,7 +191,7 @@ pub struct Hash:
         write_bit_length(self.length, self.buffer[size - tail..<size])
         self.block(self.buffer[..<size])
         for i in 0..<count:
-            if self.kind == 256: output[i] = (u8)(self.h32[i // 4] >> ((3 - i % 4) * 8))
+            if self.small(): output[i] = (u8)(self.h32[i // 4] >> ((3 - i % 4) * 8))
             else: output[i] = (u8)(self.h64[i // 8] >> ((7 - i % 8) * 8))
 
     pub mutating func reset() -> !:
@@ -204,7 +208,9 @@ pub struct Hash:
 
 func initialize(kind: i64) -> Hash:
     var state = Hash(kind = kind, disposed = false)
-    if kind == 256:
+    if kind == 224:
+        state.h32 = [0xc1059ed8, 0x367cd507, 0x3070dd17, 0xf70e5939, 0xffc00b31, 0x68581511, 0x64f98fa7, 0xbefa4fa4]
+    elif kind == 256:
         state.h32 = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19]
     elif kind == 384:
         state.h64 = [0xcbbb9d5dc1059ed8, 0x629a292a367cd507, 0x9159015a3070dd17, 0x152fecd8f70e5939,
@@ -215,10 +221,11 @@ func initialize(kind: i64) -> Hash:
     return state
 
 pub func make_hash(algorithm: str = "sha256") -> Hash!:
+    if algorithm == "sha224": return initialize(224)
     if algorithm == "sha256": return initialize(256)
     if algorithm == "sha384": return initialize(384)
     if algorithm == "sha512": return initialize(512)
-    error(invalid, "expected sha256, sha384 or sha512")
+    error(invalid, "expected sha224, sha256, sha384 or sha512")
 
 pub func digest(input: const u8[], output: u8[], algorithm: str = "sha256") -> usize!:
     var state = try make_hash(algorithm)

@@ -1,0 +1,235 @@
+## Hash, HMAC and HKDF known answers: every BearSSL test_crypto.c vector for
+## these primitives (with its one-shot, byte-by-byte and split-and-copy update
+## patterns) and the complete Wycheproof hmac_sha256/384/512 and
+## hkdf_sha256/384 files. Vectors for algorithms this package does not
+## implement (MD5, HMAC/HKDF over SHA-1) are counted and reported, not run.
+import luce_crypto.sha1 as sha1
+import luce_crypto.sha2 as sha2
+import luce_crypto.hmac as hmac
+import luce_crypto.hkdf as hkdf
+import luce_crypto.vector_file as vector_file
+
+## Pass, out-of-scope and rejection counts for one run.
+struct Tally:
+    var passed: usize
+    var out_of_scope: usize
+    var rejected: usize
+
+func same(a: const u8[], b: const u8[]) -> bool:
+    if a.length != b.length: return false
+    for i in 0..<a.length:
+        if a[i] != b[i]: return false
+    return true
+
+## The SHA-2 algorithm named by a vector field, or "" for any other.
+func sha2_name(name: const u8[]) -> str:
+    if same(name, b"sha224"): return "sha224"
+    if same(name, b"sha256"): return "sha256"
+    if same(name, b"sha384"): return "sha384"
+    if same(name, b"sha512"): return "sha512"
+    return ""
+
+## A SHA-1 or SHA-2 digest of `data` fed in pieces of `step` bytes (0: whole).
+func digest(name: const u8[], data: const u8[], step: usize, out: u8[]) -> usize!:
+    if same(name, b"sha1"):
+        var state = sha1.make()
+        try feed_sha1(&state, data, step)
+        return try state.finish(out)
+    var state = try sha2.make_hash(sha2_name(name))
+    defer state.close()
+    var at: usize = 0
+    while at < data.length:
+        let take = data.length - at if step == 0 or data.length - at < step else step
+        try state.update(data[at..<at + take])
+        at += take
+    return try state.digest(out)
+
+func feed_sha1(state: sha1.Hash*, data: const u8[], step: usize) -> !:
+    var at: usize = 0
+    while at < data.length:
+        let take = data.length - at if step == 0 or data.length - at < step else step
+        try state.update(data[at..<at + take])
+        at += take
+
+## Split at every position; continue the original and a copy (BearSSL KAT 3/4).
+func split_and_copy(name: const u8[], data: const u8[], expected: const u8[]) -> !:
+    var out: u8[64]
+    for u in 0..<data.length:
+        if same(name, b"sha1"):
+            var first = sha1.make()
+            try first.update(data[..<u])
+            var second = first
+            try first.update(data[u..])
+            try second.update(data[u..])
+            assert(same(out[..<try first.finish(out)], expected), "SHA-1 split mismatch")
+            assert(same(out[..<try second.finish(out)], expected), "SHA-1 copy mismatch")
+        else:
+            var first = try sha2.make_hash(sha2_name(name))
+            try first.update(data[..<u])
+            var second = first
+            try first.update(data[u..])
+            try second.update(data[u..])
+            assert(same(out[..<try first.digest(out)], expected), "SHA-2 split mismatch")
+            assert(same(out[..<try second.digest(out)], expected), "SHA-2 copy mismatch")
+            first.close()
+            second.close()
+
+func bearssl_hashes(directory: str, tally: Tally*) -> !:
+    var lines = try vector_file.Lines.open(directory, "bearssl/hash.txt")
+    defer lines.close()
+    var data: u8[1024]
+    var expected: u8[64]
+    var out: u8[64]
+    while lines.next():
+        let name = try lines.field(0)
+        if same(name, b"md5"):
+            tally.out_of_scope += 1
+            continue
+        let size = try lines.decode(2, expected)
+        if try lines.is(1, "million"):
+            var block: u8[1000]
+            for i in 0..<block.length: block[i] = 'a'
+            if same(name, b"sha1"):
+                var state = sha1.make()
+                for _ in 0..<(usize)1000: try state.update(block)
+                assert(same(out[..<try state.finish(out)], expected[..<size]), "SHA-1 million-a")
+            else:
+                var million = try sha2.make_hash(sha2_name(name))
+                defer million.close()
+                for _ in 0..<(usize)1000: try million.update(block)
+                assert(same(out[..<try million.digest(out)], expected[..<size]), "SHA-2 million-a")
+            tally.passed += 1
+            continue
+        let n = try lines.decode(1, data)
+        assert(same(out[..<try digest(name, data[..<n], 0, out)], expected[..<size]), "hash one-shot")
+        assert(same(out[..<try digest(name, data[..<n], 1, out)], expected[..<size]), "hash byte-by-byte")
+        try split_and_copy(name, data[..<n], expected[..<size])
+        tally.passed += 1
+
+func mac(algorithm: str, key: const u8[], data: const u8[], step: usize, out: u8[]) -> usize!:
+    var context = hmac.Context()
+    defer context.close()
+    try context.start(key, algorithm)
+    var at: usize = 0
+    while at < data.length:
+        let take = data.length - at if step == 0 or data.length - at < step else step
+        try context.update(data[at..<at + take])
+        at += take
+    return try context.finish(out)
+
+func bearssl_hmac(directory: str, tally: Tally*) -> !:
+    var lines = try vector_file.Lines.open(directory, "bearssl/hmac.txt")
+    defer lines.close()
+    var key: u8[256]
+    var data: u8[256]
+    var expected: u8[64]
+    var out: u8[64]
+    while lines.next():
+        let algorithm = sha2_name(try lines.field(0))
+        if algorithm.length == 0:
+            tally.out_of_scope += 1
+            continue
+        let k = try lines.decode(1, key)
+        let n = try lines.decode(2, data)
+        let size = try lines.decode(3, expected)
+        discard(try mac(algorithm, key[..<k], data[..<n], 0, out))
+        assert(same(out[..<size], expected[..<size]), "HMAC one-shot")
+        discard(try mac(algorithm, key[..<k], data[..<n], 1, out))
+        assert(same(out[..<size], expected[..<size]), "HMAC byte-by-byte")
+        tally.passed += 1
+
+func bearssl_hkdf(directory: str, tally: Tally*) -> !:
+    var lines = try vector_file.Lines.open(directory, "bearssl/hkdf.txt")
+    defer lines.close()
+    var ikm: u8[128]
+    var salt: u8[128]
+    var info: u8[128]
+    var expected: u8[128]
+    var out: u8[128]
+    while lines.next():
+        let algorithm = sha2_name(try lines.field(0))
+        if algorithm.length == 0:
+            tally.out_of_scope += 1
+            continue
+        let i = try lines.decode(1, ikm)
+        var s: usize = 0
+        if not (try lines.is(2, "nosalt")):
+            s = try lines.decode(2, salt)
+        let f = try lines.decode(3, info)
+        let size = try lines.decode(4, expected)
+        try hkdf.derive(ikm[..<i], salt[..<s], info[..<f], out[..<size], algorithm)
+        assert(same(out[..<size], expected[..<size]), "HKDF mismatch")
+        tally.passed += 1
+
+func wycheproof_hmac(directory: str, name: str, algorithm: str, tally: Tally*) -> !:
+    var lines = try vector_file.Lines.open(directory, name)
+    defer lines.close()
+    var key: u8[128]
+    var data: u8[256]
+    var tag: u8[64]
+    var out: u8[64]
+    var tag_size: usize = 0
+    while lines.next():
+        if try lines.is(0, "group"):
+            let bits = try lines.field(1)
+            tag_size = 0
+            for i in 0..<bits.length: tag_size = tag_size * 10 + (usize)(bits[i] - '0')
+            tag_size = tag_size // 8
+            continue
+        let k = try lines.decode(1, key)
+        let n = try lines.decode(2, data)
+        let t = try lines.decode(3, tag)
+        discard(try mac(algorithm, key[..<k], data[..<n], 0, out))
+        let accepted = t == tag_size and same(out[..<tag_size], tag[..<t])
+        if try lines.is(0, "valid"):
+            assert(accepted, "valid Wycheproof HMAC rejected")
+            tally.passed += 1
+        else:
+            assert(not accepted, "invalid Wycheproof HMAC accepted")
+            tally.rejected += 1
+
+func wycheproof_hkdf(directory: str, name: str, algorithm: str, tally: Tally*) -> !:
+    var lines = try vector_file.Lines.open(directory, name)
+    defer lines.close()
+    var ikm: u8[256]
+    var salt: u8[256]
+    var info: u8[256]
+    var size_bytes: u8[2]
+    var expected: u8[16384]
+    var out: u8[16384]
+    while lines.next():
+        let i = try lines.decode(1, ikm)
+        let s = try lines.decode(2, salt)
+        let f = try lines.decode(3, info)
+        discard(try lines.decode(4, size_bytes))
+        let size = ((usize)size_bytes[0] << 8) | (usize)size_bytes[1]
+        let e = try lines.decode(5, expected)
+        var accepted = true
+        hkdf.derive(ikm[..<i], salt[..<s], info[..<f], out[..<size], algorithm) catch failure:
+            assert(failure.code == sha2.invalid)
+            accepted = false
+            recover ()
+        if try lines.is(0, "valid"):
+            assert(accepted and e == size and same(out[..<size], expected[..<e]), "valid Wycheproof HKDF failed")
+            tally.passed += 1
+        else:
+            assert(not accepted, "invalid Wycheproof HKDF size accepted")
+            tally.rejected += 1
+
+## Optional argument: the vector directory (default tests/vectors).
+pub func main(arguments: str[]) -> i32!:
+    let directory = arguments[1] if arguments.length > 1 else "tests/vectors"
+    var bearssl = Tally()
+    try bearssl_hashes(directory, &bearssl)
+    try bearssl_hmac(directory, &bearssl)
+    try bearssl_hkdf(directory, &bearssl)
+    var wycheproof = Tally()
+    try wycheproof_hmac(directory, "wycheproof/hmac_sha256.txt", "sha256", &wycheproof)
+    try wycheproof_hmac(directory, "wycheproof/hmac_sha384.txt", "sha384", &wycheproof)
+    try wycheproof_hmac(directory, "wycheproof/hmac_sha512.txt", "sha512", &wycheproof)
+    try wycheproof_hkdf(directory, "wycheproof/hkdf_sha256.txt", "sha256", &wycheproof)
+    try wycheproof_hkdf(directory, "wycheproof/hkdf_sha384.txt", "sha384", &wycheproof)
+    assert(bearssl.passed == 42 and bearssl.out_of_scope == 26, "unexpected BearSSL hash/HMAC/HKDF counts")
+    assert(wycheproof.passed == 361 and wycheproof.rejected == 330, "unexpected Wycheproof HMAC/HKDF counts")
+    print(f"PASS hash/HMAC/HKDF: BearSSL {bearssl.passed} (+{bearssl.out_of_scope} MD5/SHA-1-keyed out of scope), Wycheproof {wycheproof.passed} valid, {wycheproof.rejected} invalid")
+    return 0

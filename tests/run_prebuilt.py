@@ -8,17 +8,25 @@ from check_blake import check_blake
 from check_argon import check_argon
 
 
+## Vector programs: each takes the tests/vectors directory as its argument.
+VECTOR_PROGRAMS = ("hash-kat", "gcm-tests", "rsa-tests", "ecdsa-tests")
+
+
+def check_vectors(binaries, timeout=300):
+    vectors = Path(__file__).resolve().parents[1] / "tests/vectors"
+    for name in VECTOR_PROGRAMS:
+        result = checked([Path(binaries) / name, vectors], timeout=timeout)
+        assert result.stdout.startswith(b"PASS "), result.stdout
+        print(result.stdout.decode(), end="", flush=True)
+
+
 def check_all(binaries):
     binaries = Path(binaries).resolve()
     for name in ("x25519", "p256", "p384", "native", "facade", "keyed-native", "keyed-failures", "memory-probe", "argon-driver", "argon-failures", "aead-tests", "shake-tests", "mldsa-tests"):
         result = checked([binaries / name])
         assert result.stdout.startswith(b"PASS "), result.stdout
         print(result.stdout.decode(), end="", flush=True)
-    vectors = Path(__file__).resolve().parents[1] / "tests/vectors"
-    for name in ("gcm-tests", "rsa-tests", "ecdsa-tests"):
-        result = checked([binaries / name, vectors], timeout=300)
-        assert result.stdout.startswith(b"PASS "), result.stdout
-        print(result.stdout.decode(), end="", flush=True)
+    check_vectors(binaries)
     check(binaries / "driver")
     check_files(binaries / "file-driver")
     check_keyed(binaries / "keyed-driver")
