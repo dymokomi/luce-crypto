@@ -66,12 +66,14 @@ pub func aead_seal(key: const u8[], nonce: const u8[], aad: const u8[], plaintex
 pub func aead_open(key: const u8[], nonce: const u8[], aad: const u8[], ciphertext: const u8[], tag: const u8[], plaintext: u8[]) -> !:
     try aead.open(key, nonce, aad, ciphertext, tag, plaintext)
 
-## AES-GCM (SP 800-38D) with a 16-, 24- or 32-byte key, a 12-byte nonce and a
-## 16-byte tag. Output may be the same bytes as input. Constant-time bitsliced AES.
+## AES-GCM (SP 800-38D) with a 16-, 24- or 32-byte key, a nonce of any length
+## (12 bytes is the norm) and a tag of `tag.length` bytes (16, or 4, 8, 12-15).
+## Output may be the same bytes as input. Constant-time bitsliced AES.
 pub func aes_gcm_seal(key: const u8[], nonce: const u8[], aad: const u8[], plaintext: const u8[], ciphertext: u8[], tag: u8[]) -> !:
     try gcm.seal(key, nonce, aad, plaintext, ciphertext, tag)
 
-## Verify the tag first; a forged message fails with `forged` and is not decrypted.
+## Verify the `tag.length`-byte tag first; a forged message fails with `forged`
+## and is not decrypted.
 pub func aes_gcm_open(key: const u8[], nonce: const u8[], aad: const u8[], ciphertext: const u8[], tag: const u8[], plaintext: u8[]) -> !:
     try gcm.open(key, nonce, aad, ciphertext, tag, plaintext)
 
