@@ -103,3 +103,7 @@ branch openssl-3.5, revision adb795d9b166b7342ad1227b6241f3d31d973438, retrieved
 stanza of an implemented family is kept; `SUMMARY.txt` counts the rest. Source
 checksums are in `tests/vectors/openssl/SOURCE-SHA256SUMS`. Test data only; no
 OpenSSL code is included.
+
+X25519 (RFC 7748) is original Luce code whose field representation and ladder
+follow BearSSL `ec_c25519_m31.c` (MIT, Copyright (c) 2016 Thomas Pornin); it
+replaces an earlier port of the public-domain TweetNaCl routine.

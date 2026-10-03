@@ -9,7 +9,7 @@ from check_argon import check_argon
 
 
 ## Vector programs: each takes the tests/vectors directory as its argument.
-VECTOR_PROGRAMS = ("hash-kat", "gcm-tests", "chacha-kat", "rsa-tests", "ecdsa-tests")
+VECTOR_PROGRAMS = ("hash-kat", "gcm-tests", "chacha-kat", "x25519-kat", "rsa-tests", "ecdsa-tests")
 
 
 def check_vectors(binaries, timeout=300):

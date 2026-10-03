@@ -1,0 +1,153 @@
+## X25519 vectors: BearSSL's two known answers and its 1000-iteration chain,
+## RFC 7748 section 5.2 (with the 1,000,000-iteration chain when "full" is
+## passed) and section 6.1, the complete Wycheproof x25519 file, and OpenSSL's
+## X25519 derive and key-pair stanzas. RFC 7748 X25519 is defined for every
+## input, so Wycheproof's "acceptable" cases (twist points, low-order points
+## giving an all-zero secret) must produce the listed value; refusing an
+## all-zero secret is the TLS layer's job.
+import luce_crypto.x25519 as x25519
+import luce_crypto.vector_file as vector_file
+
+func same(a: const u8[], b: const u8[]) -> bool:
+    if a.length != b.length: return false
+    for i in 0..<a.length:
+        if a[i] != b[i]: return false
+    return true
+
+## Iterate k, u <- X25519(k, u), k from 9 (RFC 7748 §5.2); returns k.
+func iterate(count: usize, out: u8[]):
+    var k: u8[32]
+    var u: u8[32]
+    k[0] = 9
+    u[0] = 9
+    for _ in 0..<count:
+        var next: u8[32]
+        x25519.scalarmult(next, k, u) catch: trap("X25519 failed")
+        u = k
+        k = next
+    for i in 0..<(usize)32: out[i] = k[i]
+
+func bearssl(directory: str) -> usize!:
+    var lines = try vector_file.Lines.open(directory, "bearssl/ec.txt")
+    defer lines.close()
+    var count: usize = 0
+    while lines.next():
+        if not (try lines.is(0, "c25519")):
+            continue
+        var k: u8[32]
+        var u: u8[32]
+        var expected: u8[32]
+        var out: u8[32]
+        discard(try lines.decode(1, k))
+        discard(try lines.decode(2, u))
+        discard(try lines.decode(3, expected))
+        try x25519.scalarmult(out, k, u)
+        assert(same(out, expected), "BearSSL X25519 known answer mismatch")
+        count += 1
+    return count
+
+func decimal(field: const u8[]) -> usize:
+    var value: usize = 0
+    for i in 0..<field.length: value = value * 10 + (usize)(field[i] - '0')
+    return value
+
+func rfc7748(directory: str, full: bool, skipped: usize*) -> usize!:
+    var lines = try vector_file.Lines.open(directory, "rfc/rfc7748.txt")
+    defer lines.close()
+    var count: usize = 0
+    while lines.next():
+        var a: u8[32]
+        var b: u8[32]
+        var c: u8[32]
+        var d: u8[32]
+        var e: u8[32]
+        var out: u8[32]
+        if try lines.is(0, "x25519"):
+            discard(try lines.decode(1, a))
+            discard(try lines.decode(2, b))
+            discard(try lines.decode(3, c))
+            try x25519.scalarmult(out, a, b)
+            assert(same(out, c), "RFC 7748 5.2 mismatch")
+        elif try lines.is(0, "iterate"):
+            let rounds = decimal(try lines.field(1))
+            if rounds > 1000 and not full:
+                *skipped += 1
+                continue
+            discard(try lines.decode(2, a))
+            iterate(rounds, out)
+            assert(same(out, a), "RFC 7748 iteration mismatch")
+        else:
+            discard(try lines.decode(1, a))
+            discard(try lines.decode(2, b))
+            discard(try lines.decode(3, c))
+            discard(try lines.decode(4, d))
+            discard(try lines.decode(5, e))
+            try x25519.scalarmult_base(out, a)
+            assert(same(out, b), "RFC 7748 6.1 Alice public key")
+            try x25519.scalarmult_base(out, c)
+            assert(same(out, d), "RFC 7748 6.1 Bob public key")
+            try x25519.scalarmult(out, a, d)
+            assert(same(out, e), "RFC 7748 6.1 Alice shared secret")
+            try x25519.scalarmult(out, c, b)
+            assert(same(out, e), "RFC 7748 6.1 Bob shared secret")
+        count += 1
+    return count
+
+func wycheproof(directory: str, valid: usize*, acceptable: usize*) -> !:
+    var lines = try vector_file.Lines.open(directory, "wycheproof/x25519.txt")
+    defer lines.close()
+    while lines.next():
+        var public: u8[32]
+        var private: u8[32]
+        var shared: u8[32]
+        var out: u8[32]
+        assert(try lines.decode(1, public) == 32 and try lines.decode(2, private) == 32)
+        discard(try lines.decode(3, shared))
+        try x25519.scalarmult(out, private, public)
+        assert(same(out, shared), "Wycheproof X25519 mismatch")
+        if try lines.is(0, "valid"):
+            *valid += 1
+        else:
+            assert(try lines.is(0, "acceptable"))
+            *acceptable += 1
+
+func openssl(directory: str) -> usize!:
+    var lines = try vector_file.Lines.open(directory, "openssl/x25519.txt")
+    defer lines.close()
+    var count: usize = 0
+    while lines.next():
+        var private: u8[32]
+        var public: u8[32]
+        var expected: u8[32]
+        var out: u8[32]
+        discard(try lines.decode(2, private))
+        discard(try lines.decode(3, public))
+        if try lines.is(0, "derive"):
+            assert(try lines.is(1, "ok"))
+            discard(try lines.decode(4, expected))
+            try x25519.scalarmult(out, private, public)
+            assert(same(out, expected), "OpenSSL X25519 derive mismatch")
+        else:
+            try x25519.scalarmult_base(out, private)
+            assert(same(out, public) == try lines.is(1, "ok"), "OpenSSL X25519 key pair check failed")
+        count += 1
+    return count
+
+## Optional arguments: the vector directory, then "full" for the
+## 1,000,000-iteration RFC 7748 chain.
+pub func main(arguments: str[]) -> i32!:
+    let directory = arguments[1] if arguments.length > 1 else "tests/vectors"
+    let full = arguments.length > 2 and arguments[2] == "full"
+    let known = try bearssl(directory)
+    var chain: u8[32]
+    iterate(1000, chain)
+    assert(chain[0] == 0x68 and chain[31] == 0x51, "BearSSL 1000-iteration chain mismatch")
+    var skipped: usize = 0
+    let rfc = try rfc7748(directory, full, &skipped)
+    var valid: usize = 0
+    var acceptable: usize = 0
+    try wycheproof(directory, &valid, &acceptable)
+    let ossl = try openssl(directory)
+    assert(known == 2 and valid == 264 and acceptable == 254 and ossl == 15, "unexpected X25519 vector counts")
+    print(f"PASS X25519: BearSSL {known} + 1000-iteration chain, RFC 7748 {rfc} (+{skipped} million-iteration chain unless full), Wycheproof {valid} valid, {acceptable} acceptable, OpenSSL {ossl}")
+    return 0

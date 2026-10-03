@@ -50,4 +50,10 @@
 6 evpmd_sha.txt: SHAKE128 (hash not implemented)
 6 evpmd_sha.txt: SHAKE256 (hash not implemented)
 1 evpmd_sha.txt: Sha3-256 (hash not implemented)
+50 evppkey_ecx.txt: Ed25519/Ed448 signatures (not implemented)
+2 evppkey_ecx.txt: FIPS-provider-only derive checks
+17 evppkey_ecx.txt: ed25519/ed25519 key pair (curve not implemented)
+20 evppkey_ecx.txt: ed448/ed448 key pair (curve not implemented)
+5 evppkey_ecx.txt: x448 derive (curve not implemented)
+6 evppkey_ecx.txt: x448/x448 key pair (curve not implemented)
 2 evppkey_kdf_hkdf.txt: FIPS-provider-only policy checks

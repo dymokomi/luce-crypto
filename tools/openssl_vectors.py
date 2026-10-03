@@ -15,7 +15,9 @@ SUMMARY.txt so the README can list them. Fields are hex, "-" for empty and
   hmac.txt     ALG KEY INPUT OUTPUT RESULT
   hkdf.txt     MODE ALG IKM SALT INFO OUTPUT RESULT
   cipher.txt   CIPHER OPERATION RESULT KEY IV AAD PLAIN CIPHERTEXT TAG
+  x25519.txt   derive RESULT PRIVATE PEER SHARED | keypair RESULT PRIVATE PUBLIC
 """
+import base64
 import collections
 import hashlib
 from pathlib import Path
@@ -91,6 +93,142 @@ def provider_only(stanza):
     """Stanzas that only run in the FIPS provider test OpenSSL's FIPS policy."""
     available = get(stanza, "Availablein")
     return available is not None and "default" not in available
+
+
+# ---- Keys ------------------------------------------------------------------
+
+def tlv(data, at=0):
+    """(tag, content, end) of the DER element at `at`."""
+    tag, first = data[at], data[at + 1]
+    at += 2
+    if first & 0x80:
+        count = first & 0x7F
+        first = int.from_bytes(data[at:at + count], "big")
+        at += count
+    return tag, data[at:at + first], at + first
+
+
+def children(data):
+    out, at = [], 0
+    while at < len(data):
+        tag, content, end = tlv(data, at)
+        out.append((tag, content, data[at:end]))
+        at = end
+    return out
+
+
+OIDS = {"2b656e": "x25519", "2b656f": "x448", "2b6570": "ed25519", "2b6571": "ed448", "2a8648ce3d030107": "p256", "2b81040022": "p384",
+        "2b81040023": "p521", "2a864886f70d010101": "rsa", "2a864886f70d01010a": "rsa-pss",
+        "2a8648ce3d0201": "ec"}
+
+
+def curve_name(oid):
+    return OIDS.get(oid.hex(), "curve-" + oid.hex())
+
+
+def pem_der(pem):
+    body = "".join(line for line in pem.splitlines() if not line.startswith("-----"))
+    return base64.b64decode(body)
+
+
+class Key:
+    """kind (x25519, p256, p384, rsa, ...), private scalar, public bytes or (n, e)."""
+
+    def __init__(self, kind, private=None, public=None):
+        self.kind, self.private, self.public = kind, private, public
+
+
+def parse_key(pem, private):
+    der = pem_der(pem)
+    label = pem.splitlines()[0]
+    parts = children(tlv(der)[1])
+    if "RSA PRIVATE KEY" in label:
+        fields = [c[1] for c in parts]
+        return Key("rsa", None, (fields[1], fields[2]))
+    if "EC PRIVATE KEY" in label:
+        return ec_private(tlv(der)[1], None)
+    if private:
+        algorithm = children(parts[1][1])
+        kind = curve_name(algorithm[0][1])
+        inner = parts[2][1]
+        if kind in ("x25519", "x448"):
+            return Key(kind, tlv(inner)[1])
+        if kind == "ec":
+            return ec_private(tlv(inner)[1], curve_name(algorithm[1][1]))
+        if kind in ("rsa", "rsa-pss"):
+            fields = [c[1] for c in children(tlv(inner)[1])]
+            return Key(kind, None, (fields[1], fields[2]))
+        return Key(kind)
+    algorithm = children(parts[0][1])
+    kind = curve_name(algorithm[0][1])
+    bits = parts[1][1][1:]
+    if kind == "ec":
+        return Key(curve_name(algorithm[1][1]) if algorithm[1][0] == 6 else "explicit-curve", None, bits)
+    if kind in ("rsa", "rsa-pss"):
+        fields = [c[1] for c in children(tlv(bits)[1])]
+        return Key(kind, None, (fields[0], fields[1]))
+    return Key(kind, None, bits)
+
+
+def ec_private(sequence, curve):
+    fields = children(sequence)
+    scalar, public = fields[1][1], None
+    for tag, content, _ in fields[2:]:
+        if tag == 0xA0:
+            curve = curve_name(tlv(content)[1])
+        elif tag == 0xA1:
+            public = tlv(content)[1][1:]
+    return Key(curve or "explicit-curve", scalar, public)
+
+
+def keys_of(stanzas_list):
+    keys = {}
+    for stanza in stanzas_list:
+        for item in stanza:
+            if item[0] in ("PrivateKey", "PublicKey") and len(item) == 3:
+                try:
+                    keys[item[1]] = parse_key(item[2], item[0] == "PrivateKey")
+                except (IndexError, ValueError):
+                    keys[item[1]] = Key("unparsable")
+            elif item[0] in ("PrivateKeyRaw", "PublicKeyRaw"):
+                name, kind, value = item[1].split(":", 2)
+                key = Key(kind.lower())
+                if item[0] == "PrivateKeyRaw":
+                    key.private = bytes.fromhex(value)
+                else:
+                    key.public = bytes.fromhex(value)
+                keys[name] = key
+    return keys
+
+
+def hexs(value):
+    return value.hex() if value else "-"
+
+
+def x25519(source, summary):
+    lines = []
+    blocks = stanzas(source / "evppkey_ecx.txt")
+    keys = keys_of(blocks)
+    for stanza in blocks:
+        if provider_only(stanza):
+            if get(stanza, "Derive"):
+                summary["evppkey_ecx.txt: FIPS-provider-only derive checks"] += 1
+            continue
+        if get(stanza, "Derive"):
+            mine, peer = keys[get(stanza, "Derive")], keys[get(stanza, "PeerKey")]
+            if mine.kind != "x25519":
+                summary[f"evppkey_ecx.txt: {mine.kind} derive (curve not implemented)"] += 1
+                continue
+            lines.append(f"derive {get(stanza, 'Result', 'ok')} {hexs(mine.private)} {hexs(peer.public)} {value_hex(get(stanza, 'SharedSecret'))}")
+        elif get(stanza, "PrivPubKeyPair"):
+            mine, theirs = (keys[n] for n in get(stanza, "PrivPubKeyPair").split(":"))
+            if mine.kind != "x25519" or theirs.kind != "x25519":
+                summary[f"evppkey_ecx.txt: {mine.kind}/{theirs.kind} key pair (curve not implemented)"] += 1
+                continue
+            lines.append(f"keypair {get(stanza, 'Result', 'ok')} {hexs(mine.private)} {hexs(theirs.public)}")
+        elif any(get(stanza, k) for k in ("OneShotDigestSign", "OneShotDigestVerify", "Sign", "Verify")):
+            summary["evppkey_ecx.txt: Ed25519/Ed448 signatures (not implemented)"] += 1
+    return lines
 
 
 def digest(source, summary):
@@ -173,13 +311,14 @@ def main():
     source = Path(sys.argv[1]) / "test/recipes/30-test_evp_data"
     OUT.mkdir(parents=True, exist_ok=True)
     summary = collections.Counter()
-    for name, convert in (("digest", digest), ("hmac", hmac), ("hkdf", hkdf), ("cipher", cipher)):
+    for name, convert in (("digest", digest), ("hmac", hmac), ("hkdf", hkdf), ("cipher", cipher),
+                          ("x25519", x25519)):
         lines = convert(source, summary)
         (OUT / f"{name}.txt").write_text("\n".join(lines) + "\n")
         print(f"{name}.txt: {len(lines)} cases")
     (OUT / "SUMMARY.txt").write_text("".join(f"{count} {what}\n" for what, count in sorted(summary.items())))
     used = ["evpmd_sha.txt", "evpmac_common.txt", "evpkdf_hkdf.txt", "evppkey_kdf_hkdf.txt",
-            "evpciph_aes_common.txt", "evpciph_chacha.txt"]
+            "evpciph_aes_common.txt", "evpciph_chacha.txt", "evppkey_ecx.txt"]
     (OUT / "SOURCE-SHA256SUMS").write_text(
         "".join(f"{hashlib.sha256((source / n).read_bytes()).hexdigest()}  {n}\n" for n in used))
 
