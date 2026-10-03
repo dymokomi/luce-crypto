@@ -62,6 +62,17 @@ pub struct Lines:
             at = end + 1
         error(sha2.invalid, "vector line has too few fields")
 
+    ## The number of fields on the current line.
+    pub func count() -> usize:
+        var fields: usize = 0
+        var at = self.line_start
+        while at < self.line_end:
+            fields += 1
+            while at < self.line_end and self.text[at] != ' ':
+                at += 1
+            at += 1
+        return fields
+
     ## Whether field `index` equals `word`.
     pub func is(index: usize, word: str) -> bool!:
         let value = try self.field(index)
@@ -74,12 +85,17 @@ pub struct Lines:
 
     ## Decode hex field `index` into `out`; returns the byte count.
     pub func decode(index: usize, out: u8[]) -> usize!:
-        let value = try self.field(index)
-        if value.length % 2 != 0 or value.length // 2 > out.length:
-            error(sha2.invalid, "vector hex field has an odd length or is too long")
-        for i in 0..<value.length // 2:
-            out[i] = (try nibble(value[2 * i]) << 4) | try nibble(value[2 * i + 1])
-        return value.length // 2
+        return try decode_hex(try self.field(index), out)
+
+## Decode hex text ("-" is empty) into `out`; returns the byte count.
+pub func decode_hex(value: const u8[], out: u8[]) -> usize!:
+    if value.length == 1 and value[0] == '-':
+        return 0
+    if value.length % 2 != 0 or value.length // 2 > out.length:
+        error(sha2.invalid, "vector hex field has an odd length or is too long")
+    for i in 0..<value.length // 2:
+        out[i] = (try nibble(value[2 * i]) << 4) | try nibble(value[2 * i + 1])
+    return value.length // 2
 
 func nibble(digit: u8) -> u8!:
     if digit >= '0' and digit <= '9': return digit - '0'

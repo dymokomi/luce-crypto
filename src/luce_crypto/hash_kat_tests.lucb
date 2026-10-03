@@ -1,7 +1,7 @@
 ## Hash, HMAC and HKDF known answers: every BearSSL test_crypto.c vector for
 ## these primitives (with its one-shot, byte-by-byte and split-and-copy update
 ## patterns) and the complete Wycheproof hmac_sha256/384/512 and
-## hkdf_sha256/384 files. Vectors for algorithms this package does not
+## hkdf_sha256/384 files, and OpenSSL's evpmd_sha, HMAC and HKDF stanzas. Vectors for algorithms this package does not
 ## implement (MD5, HMAC/HKDF over SHA-1) are counted and reported, not run.
 import luce_crypto.sha1 as sha1
 import luce_crypto.sha2 as sha2
@@ -216,6 +216,118 @@ func wycheproof_hkdf(directory: str, name: str, algorithm: str, tally: Tally*) -
             assert(not accepted, "invalid Wycheproof HKDF size accepted")
             tally.rejected += 1
 
+func decimal(field: const u8[]) -> usize:
+    var value: usize = 0
+    for i in 0..<field.length: value = value * 10 + (usize)(field[i] - '0')
+    return value
+
+## OpenSSL evpmd_sha.txt: each input chunk repeated Ncopy times and fed
+## Count times, in order.
+func openssl_digest(directory: str, tally: Tally*) -> !:
+    var lines = try vector_file.Lines.open(directory, "openssl/digest.txt")
+    defer lines.close()
+    var expected: u8[64]
+    var out: u8[64]
+    while lines.next():
+        let name = try lines.field(0)
+        let size = try lines.decode(1, expected)
+        var one = sha1.make()
+        var two = try sha2.make_hash(sha2_name(name) if not same(name, b"sha1") else "sha256")
+        defer two.close()
+        var index: usize = 2
+        while index < lines.count():
+            var chunk: u8[256]
+            let text = try lines.field(index)
+            var parts: usize[3]
+            var part: usize = 0
+            for i in 0..<text.length:
+                if text[i] == ':':
+                    parts[part] = i
+                    part += 1
+            let n = try vector_file.decode_hex(text[..<parts[0]], chunk)
+            let copies = decimal(text[parts[0] + 1..<parts[1]])
+            let count = decimal(text[parts[1] + 1..])
+            # LUCE-BUG: nested `for _` loops are rejected (luce-base ae3598c).
+            for _round in 0..<count:
+                for _ in 0..<copies:
+                    if same(name, b"sha1"):
+                        try one.update(chunk[..<n])
+                    else:
+                        try two.update(chunk[..<n])
+            index += 1
+        if same(name, b"sha1"):
+            assert(same(out[..<try one.finish(out)], expected[..<size]), "OpenSSL SHA-1 mismatch")
+        else:
+            assert(same(out[..<try two.digest(out)], expected[..<size]), "OpenSSL SHA-2 mismatch")
+        tally.passed += 1
+
+## OpenSSL evpmac_common.txt HMAC stanzas over SHA-1/SHA-2 (SHA-1 HMAC is
+## not implemented and is counted out of scope).
+func openssl_hmac(directory: str, tally: Tally*) -> !:
+    var lines = try vector_file.Lines.open(directory, "openssl/hmac.txt")
+    defer lines.close()
+    var key: u8[256]
+    var data: u8[512]
+    var expected: u8[64]
+    var out: u8[64]
+    while lines.next():
+        let algorithm = sha2_name(try lines.field(0))
+        if algorithm.length == 0:
+            tally.out_of_scope += 1
+            continue
+        assert(try lines.is(4, "ok"))
+        let k = try lines.decode(1, key)
+        let n = try lines.decode(2, data)
+        let size = try lines.decode(3, expected)
+        discard(try mac(algorithm, key[..<k], data[..<n], 0, out))
+        assert(same(out[..<size], expected[..<size]), "OpenSSL HMAC mismatch")
+        tally.passed += 1
+
+## OpenSSL evpkdf_hkdf.txt and evppkey_kdf_hkdf.txt: extract-and-expand,
+## extract only and expand only, including the expected failures (no digest,
+## no key, an extract output that is not the hash size).
+func openssl_hkdf(directory: str, tally: Tally*) -> !:
+    var lines = try vector_file.Lines.open(directory, "openssl/hkdf.txt")
+    defer lines.close()
+    var ikm: u8[256]
+    var salt: u8[256]
+    var info: u8[256]
+    var expected: u8[512]
+    var out: u8[512]
+    while lines.next():
+        let digest_name = try lines.field(1)
+        let ok = try lines.is(6, "ok")
+        let algorithm = sha2_name(digest_name)
+        if algorithm.length == 0 and not (try lines.is(1, "absent")):
+            tally.out_of_scope += 1
+            continue
+        let size = try lines.decode(5, expected)
+        var accepted = algorithm.length != 0 and not (try lines.is(2, "absent"))
+        if accepted:
+            let i = try lines.decode(2, ikm)
+            let s = 0 if try lines.is(3, "absent") else try lines.decode(3, salt)
+            let f = 0 if try lines.is(4, "absent") else try lines.decode(4, info)
+            if try lines.is(0, "extract"):
+                if size != try hmac_size(algorithm):
+                    accepted = false
+                else:
+                    discard(try hkdf.extract(ikm[..<i], salt[..<s], out, algorithm))
+            elif try lines.is(0, "expand"):
+                try hkdf.expand(ikm[..<i], info[..<f], out[..<size], algorithm)
+            else:
+                try hkdf.derive(ikm[..<i], salt[..<s], info[..<f], out[..<size], algorithm)
+        if ok:
+            assert(accepted and same(out[..<size], expected[..<size]), "OpenSSL HKDF mismatch")
+            tally.passed += 1
+        else:
+            assert(not accepted, "OpenSSL HKDF error case accepted")
+            tally.rejected += 1
+
+func hmac_size(algorithm: str) -> usize!:
+    var state = try sha2.make_hash(algorithm)
+    defer state.close()
+    return try state.digest_size()
+
 ## Optional argument: the vector directory (default tests/vectors).
 pub func main(arguments: str[]) -> i32!:
     let directory = arguments[1] if arguments.length > 1 else "tests/vectors"
@@ -229,7 +341,12 @@ pub func main(arguments: str[]) -> i32!:
     try wycheproof_hmac(directory, "wycheproof/hmac_sha512.txt", "sha512", &wycheproof)
     try wycheproof_hkdf(directory, "wycheproof/hkdf_sha256.txt", "sha256", &wycheproof)
     try wycheproof_hkdf(directory, "wycheproof/hkdf_sha384.txt", "sha384", &wycheproof)
+    var openssl = Tally()
+    try openssl_digest(directory, &openssl)
+    try openssl_hmac(directory, &openssl)
+    try openssl_hkdf(directory, &openssl)
     assert(bearssl.passed == 42 and bearssl.out_of_scope == 26, "unexpected BearSSL hash/HMAC/HKDF counts")
     assert(wycheproof.passed == 361 and wycheproof.rejected == 330, "unexpected Wycheproof HMAC/HKDF counts")
-    print(f"PASS hash/HMAC/HKDF: BearSSL {bearssl.passed} (+{bearssl.out_of_scope} MD5/SHA-1-keyed out of scope), Wycheproof {wycheproof.passed} valid, {wycheproof.rejected} invalid")
+    assert(openssl.passed == 46 and openssl.rejected == 2 and openssl.out_of_scope == 40, "unexpected OpenSSL hash/HMAC/HKDF counts")
+    print(f"PASS hash/HMAC/HKDF: BearSSL {bearssl.passed} (+{bearssl.out_of_scope} MD5/SHA-1-keyed out of scope), Wycheproof {wycheproof.passed} valid, {wycheproof.rejected} invalid, OpenSSL {openssl.passed} ok, {openssl.rejected} errors (+{openssl.out_of_scope} SHA-1/other-hash HKDF out of scope)")
     return 0

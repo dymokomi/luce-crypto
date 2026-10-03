@@ -1,7 +1,8 @@
 ## AES and AES-GCM vectors: BearSSL's AES block, Monte Carlo and CTR known
 ## answers, GHASH known answers plus a cross-check against a bit-serial GHASH,
 ## GCM known answers with tampering and tag truncation, the complete Wycheproof
-## aes_gcm file, and NIST CAVP gcmEncryptExtIV/gcmDecrypt cases.
+## aes_gcm file, NIST CAVP gcmEncryptExtIV/gcmDecrypt cases and OpenSSL's
+## AES-GCM stanzas.
 import luce_crypto.aes as aes
 import luce_crypto.chacha as chacha
 import luce_crypto.gcm as gcm
@@ -293,6 +294,52 @@ func cavp(directory: str, name: str, valid: usize*, invalid: usize*) -> !:
             assert(forged(key[..<k], iv[..<v], aad[..<a], ct[..<c], tag[..<t]), "failing CAVP GCM case accepted")
             *invalid += 1
 
+## OpenSSL evpciph_aes_common.txt AES-GCM stanzas. Tags shorter than 12
+## bytes other than 4 and 8 are accepted by OpenSSL's default provider (its
+## FIPS provider marks them unapproved); this package follows SP 800-38D and
+## refuses them, which is counted separately.
+func openssl(directory: str, passed: usize*, failing: usize*, refused: usize*) -> !:
+    var lines = try vector_file.Lines.open(directory, "openssl/cipher.txt")
+    defer lines.close()
+    var key: u8[32]
+    var iv: u8[64]
+    var aad: u8[512]
+    var plain: u8[512]
+    var cipher: u8[512]
+    var tag: u8[16]
+    while lines.next():
+        let kind = try lines.field(0)
+        if kind.length < 4 or kind[0] != 'a':
+            continue
+        let k = try lines.decode(3, key)
+        let v = try lines.decode(4, iv)
+        let a = 0 if try lines.is(5, "absent") else try lines.decode(5, aad)
+        let p = try lines.decode(6, plain)
+        let c = try lines.decode(7, cipher)
+        let t = try lines.decode(8, tag)
+        assert(p == c)
+        if not gcm.valid_tag_length(t):
+            var out: u8[512]
+            var out_tag: u8[16]
+            var rejected = false
+            gcm.seal(key[..<k], iv[..<v], aad[..<a], plain[..<p], out[..<p], out_tag[..<t]) catch failure:
+                assert(failure.code == gcm.invalid)
+                rejected = true
+                recover ()
+            assert(rejected, "GCM tag length outside SP 800-38D accepted")
+            *refused += 1
+        elif try lines.is(2, "ok"):
+            if try lines.is(1, "decrypt"):
+                var out: u8[512]
+                try gcm.open(key[..<k], iv[..<v], aad[..<a], cipher[..<c], tag[..<t], out[..<c])
+                assert(same(out[..<c], plain[..<p]), "OpenSSL GCM decrypt mismatch")
+            else:
+                try round_trip(key[..<k], iv[..<v], aad[..<a], plain[..<p], cipher[..<c], tag[..<t])
+            *passed += 1
+        else:
+            assert(forged(key[..<k], iv[..<v], aad[..<a], cipher[..<c], tag[..<t]), "failing OpenSSL GCM case accepted")
+            *failing += 1
+
 ## Optional argument: the vector directory (default tests/vectors).
 pub func main(arguments: str[]) -> i32!:
     let directory = arguments[1] if arguments.length > 1 else "tests/vectors"
@@ -321,7 +368,12 @@ pub func main(arguments: str[]) -> i32!:
             for j in 0..<suffix.length: name[kind.length + 1 + j] = suffix.bytes[j]
             try cavp(directory, (str)name[..<kind.length + 5], &cavp_valid, &cavp_invalid)
     assert(cavp_valid + cavp_invalid >= 9641, "CAVP GCM files are missing")
+    var ossl_passed: usize = 0
+    var ossl_failing: usize = 0
+    var ossl_refused: usize = 0
+    try openssl(directory, &ossl_passed, &ossl_failing, &ossl_refused)
+    assert(ossl_passed == 161 and ossl_failing == 3 and ossl_refused == 9, "unexpected OpenSSL GCM counts")
     assert(blocks == 387 and carlo == 3 and ctr == 9 and ghash_count == 1041 and kats == 18, "unexpected BearSSL AES/GCM counts")
     assert(out_of_scope == 33, "unexpected BearSSL AES out-of-scope count")
-    print(f"PASS AES/GCM: BearSSL {blocks} block, {carlo} Monte Carlo, {ctr} CTR, {ghash_count} GHASH, {kats} GCM (+{out_of_scope} CBC/decrypt out of scope); Wycheproof {valid} valid, {invalid} invalid; CAVP {cavp_valid} valid, {cavp_invalid} failing")
+    print(f"PASS AES/GCM: BearSSL {blocks} block, {carlo} Monte Carlo, {ctr} CTR, {ghash_count} GHASH, {kats} GCM (+{out_of_scope} CBC/decrypt out of scope); Wycheproof {valid} valid, {invalid} invalid; CAVP {cavp_valid} valid, {cavp_invalid} failing; OpenSSL {ossl_passed} ok, {ossl_failing} failing, {ossl_refused} short tags refused")
     return 0

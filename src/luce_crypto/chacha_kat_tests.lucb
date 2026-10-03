@@ -1,7 +1,7 @@
 ## ChaCha20, Poly1305 and ChaCha20-Poly1305 vectors: BearSSL's ChaCha20
 ## known answers at every prefix length (with counter and overrun checks) and
 ## its AEAD known answer, every RFC 8439 Appendix A vector, and the complete
-## Wycheproof chacha20_poly1305 file.
+## Wycheproof chacha20_poly1305 file and OpenSSL's ChaCha20 stanzas.
 import luce_crypto.aead as aead
 import luce_crypto.chacha as chacha
 import luce_crypto.poly1305 as poly1305
@@ -54,7 +54,7 @@ func bearssl_chacha(directory: str) -> usize!:
 
 ## Seal and open, out of place and in place, then reject a flipped tag bit.
 func aead_round_trip(key: const u8[], nonce: const u8[], aad: const u8[], plain: const u8[], cipher: const u8[], tag: const u8[]) -> !:
-    var out: u8[600]
+    var out: u8[2048]
     var out_tag: u8[16]
     let n = plain.length
     try aead.seal(key, nonce, aad, plain, out[..<n], out_tag)
@@ -68,7 +68,7 @@ func aead_round_trip(key: const u8[], nonce: const u8[], aad: const u8[], plain:
     assert(rejected(key, nonce, aad, cipher, out_tag), "ChaCha20-Poly1305 forged tag accepted")
 
 func rejected(key: const u8[], nonce: const u8[], aad: const u8[], cipher: const u8[], tag: const u8[]) -> bool:
-    var out: u8[600]
+    var out: u8[2048]
     var refused = false
     aead.open(key, nonce, aad, cipher, tag, out[..<cipher.length]) catch failure:
         assert(failure.code == aead.forged or failure.code == aead.invalid)
@@ -175,6 +175,50 @@ func wycheproof(directory: str, valid: usize*, invalid: usize*) -> !:
             assert(rejected(key, iv[..<v], aad[..<a], ct[..<n], tag[..<t]), "invalid Wycheproof ChaCha20-Poly1305 case accepted")
             *invalid += 1
 
+## OpenSSL evpciph_chacha.txt: raw ChaCha20 (a 16-byte IV of little-endian
+## counter and nonce) and ChaCha20-Poly1305, including its refused IV lengths
+## and a forged tag.
+func openssl(directory: str, passed: usize*, refused: usize*) -> !:
+    var lines = try vector_file.Lines.open(directory, "openssl/cipher.txt")
+    defer lines.close()
+    var key: u8[32]
+    var iv: u8[16]
+    var aad: u8[64]
+    var plain: u8[2048]
+    var cipher: u8[2048]
+    var out: u8[2048]
+    var tag: u8[16]
+    while lines.next():
+        if not (try lines.is(0, "chacha20")) and not (try lines.is(0, "chacha20-poly1305")):
+            continue
+        discard(try lines.decode(3, key))
+        let v = try lines.decode(4, iv)
+        let p = try lines.decode(6, plain)
+        let c = 0 if try lines.is(7, "absent") else try lines.decode(7, cipher)
+        if try lines.is(0, "chacha20"):
+            assert(v == 16 and p == c and try lines.is(2, "ok"))
+            let counter = (u32)iv[0] | ((u32)iv[1] << 8) | ((u32)iv[2] << 16) | ((u32)iv[3] << 24)
+            discard(try chacha.xor(key, iv[4..<16], counter, plain[..<p], out[..<p]))
+            assert(same(out[..<p], cipher[..<c]), "OpenSSL ChaCha20 mismatch")
+            *passed += 1
+            continue
+        let a = try lines.decode(5, aad)
+        discard(try lines.decode(8, tag))
+        if try lines.is(2, "ok"):
+            try aead_round_trip(key, iv[..<v], aad[..<a], plain[..<p], cipher[..<c], tag)
+            *passed += 1
+        elif try lines.is(2, "INVALID_IV_LENGTH"):
+            var failed = false
+            aead.seal(key, iv[..<v], aad[..<a], plain[..<p], out[..<p], tag) catch failure:
+                assert(failure.code == aead.invalid)
+                failed = true
+                recover ()
+            assert(failed, "ChaCha20-Poly1305 accepted an invalid IV length")
+            *refused += 1
+        else:
+            assert(rejected(key, iv[..<v], aad[..<a], cipher[..<c], tag), "forged OpenSSL ChaCha20-Poly1305 accepted")
+            *refused += 1
+
 ## Optional argument: the vector directory (default tests/vectors).
 pub func main(arguments: str[]) -> i32!:
     let directory = arguments[1] if arguments.length > 1 else "tests/vectors"
@@ -184,7 +228,11 @@ pub func main(arguments: str[]) -> i32!:
     var valid: usize = 0
     var invalid: usize = 0
     try wycheproof(directory, &valid, &invalid)
+    var ossl_passed: usize = 0
+    var ossl_refused: usize = 0
+    try openssl(directory, &ossl_passed, &ossl_refused)
+    assert(ossl_passed == 24 and ossl_refused == 3, "unexpected OpenSSL ChaCha20 counts")
     assert(chacha_count == 3 and aead_count == 1 and rfc == 23, "unexpected BearSSL/RFC ChaCha20 counts")
     assert(valid == 256 and invalid == 69, "unexpected Wycheproof ChaCha20-Poly1305 counts")
-    print(f"PASS ChaCha20/Poly1305: BearSSL {chacha_count} ChaCha20 (all prefixes) + {aead_count} AEAD, RFC 8439 {rfc}, Wycheproof {valid} valid, {invalid} invalid")
+    print(f"PASS ChaCha20/Poly1305: BearSSL {chacha_count} ChaCha20 (all prefixes) + {aead_count} AEAD, RFC 8439 {rfc}, Wycheproof {valid} valid, {invalid} invalid, OpenSSL {ossl_passed} ok, {ossl_refused} refused")
     return 0

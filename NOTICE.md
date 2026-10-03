@@ -95,3 +95,11 @@ cases per parameter set; the tool can emit all 47,250) and
 https://csrc.nist.gov/Projects/Cryptographic-Algorithm-Validation-Program;
 source checksums in `tests/vectors/cavp/SOURCE-SHA256SUMS`. US government test
 data; informal use is not CAVP validation.
+
+`tests/vectors/openssl/*.txt` are converted by `tools/openssl_vectors.py` from
+OpenSSL `test/recipes/30-test_evp_data/*.txt` (https://github.com/openssl/openssl,
+branch openssl-3.5, revision adb795d9b166b7342ad1227b6241f3d31d973438, retrieved
+2026-10-02; Apache License 2.0, Copyright The OpenSSL Project Authors). Every
+stanza of an implemented family is kept; `SUMMARY.txt` counts the rest. Source
+checksums are in `tests/vectors/openssl/SOURCE-SHA256SUMS`. Test data only; no
+OpenSSL code is included.
