@@ -16,7 +16,7 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     programs = ["x25519", "p256", "native", "facade", "driver", "file-driver", "keyed-native", "keyed-failures", "keyed-driver", "memory-probe"]
-    programs += ["blake-driver", "argon-driver", "argon-failures", "aead-tests", "hash-kat", "gcm-tests", "rsa-tests", "ecdsa-tests", "shake-tests", "mldsa-tests", "mldsa-interop"]
+    programs += ["blake-driver", "argon-driver", "argon-failures", "aead-tests", "hash-kat", "gcm-tests", "chacha-kat", "rsa-tests", "ecdsa-tests", "shake-tests", "mldsa-tests", "mldsa-interop"]
     scripts = ["run_prebuilt.py", "check_hashes.py", "test_vectors.py", "check_keyed.py", "rfc_keyed.py", "test_keyed.py"]
     scripts += ["check_blake.py", "check_argon.py", "test_argon.py", "check_mldsa.py"]
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()

@@ -82,3 +82,16 @@ Copyright (c) 2016 Thomas Pornin). Only the known-answer data is taken; the
 modpow inputs come from the same HMAC_DRBG seed BearSSL uses, with results
 computed by Python. SHA-256 sums: `tests/vectors/bearssl/SOURCE-SHA256SUMS`.
 Test data only; no BearSSL code is included.
+
+`tests/vectors/rfc/*.txt` are extracted by `tools/rfc_vectors.py` from RFC 8439
+(Appendix A) and RFC 7748 (sections 5.2 and 6.1), retrieved 2026-10-02 from
+https://www.rfc-editor.org/; source checksums in
+`tests/vectors/rfc/SOURCE-SHA256SUMS`. IETF Trust test data, used as test data.
+
+`tests/vectors/cavp/*.txt` are converted by `tools/cavp_vectors.py` from NIST
+CAVP `gcmtestvectors.zip` (gcmEncryptExtIV and gcmDecrypt, a subset of three
+cases per parameter set; the tool can emit all 47,250) and
+`186-4ecdsatestvectors.zip` (SigVer.rsp), retrieved 2026-10-02 from
+https://csrc.nist.gov/Projects/Cryptographic-Algorithm-Validation-Program;
+source checksums in `tests/vectors/cavp/SOURCE-SHA256SUMS`. US government test
+data; informal use is not CAVP validation.

@@ -83,7 +83,10 @@ pub func hchacha20(key: const u8[], nonce: const u8[], output: u8[]) -> !:
     store(output, 24, s[14])
     store(output, 28, s[15])
 
-pub func xor(key: const u8[], nonce: const u8[], counter: u32, input: const u8[], output: u8[]) -> !:
+## XOR `input` with the keystream starting at block `counter` into `output`
+## (which may be the same bytes). Returns the counter after the blocks used,
+## as BearSSL's `br_chacha20_run` does.
+pub func xor(key: const u8[], nonce: const u8[], counter: u32, input: const u8[], output: u8[]) -> u32!:
     if key.length != 32 or nonce.length != 12: error(sha2.invalid, "ChaCha20 requires a 32-byte key and 12-byte nonce")
     if output.length < input.length: error(sha2.invalid, "ChaCha20 output is shorter than input")
     if input.length > 16777216: error(sha2.length_exceeded, "ChaCha20 input exceeds 16 MiB")
@@ -98,3 +101,4 @@ pub func xor(key: const u8[], nonce: const u8[], counter: u32, input: const u8[]
         let take = 64 if input.length - at > 64 else input.length - at
         for i in 0..<take: output[at + i] = input[at + i] ^ stream[i]
         at += take
+    return n

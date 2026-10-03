@@ -163,7 +163,7 @@ func ghash_kats(directory: str) -> usize!:
         key[3] = (u8)(u & 0xff)
         var zeros: u8[1056]
         var buf: u8[1056]
-        try chacha.xor(key, nonce, 1, zeros, buf)
+        discard(try chacha.xor(key, nonce, 1, zeros, buf))
         var y0: u8[16]
         var y1: u8[16]
         for i in 0..<(usize)16:
