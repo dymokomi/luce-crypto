@@ -3,16 +3,14 @@ import hashlib
 from pathlib import Path
 import tempfile
 import unittest
-from check_hashes import vectors, cases
-from vector_root import vector_root
+from check_hashes import vectors, cases, ROOT
 
 
 class VectorTests(unittest.TestCase):
     def test_pinned_files(self):
-        root = vector_root()
-        for line in (root / "SHA256SUMS").read_text().splitlines():
+        for line in (ROOT / "tests/vectors/SHA256SUMS").read_text().splitlines():
             expected, name = line.split("  ")
-            self.assertEqual(hashlib.sha256((root / name).read_bytes()).hexdigest(), expected)
+            self.assertEqual(hashlib.sha256((ROOT / "tests/vectors" / name).read_bytes()).hexdigest(), expected)
 
     def test_all_counts(self):
         counts = {"nist": 0, "generated": 0}

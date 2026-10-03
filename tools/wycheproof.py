@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""Convert Project Wycheproof JSON into the line files under wycheproof/ of the
-luce-crypto-vectors checkout (located by tests/vector_root.py).
+"""Convert Project Wycheproof JSON into the line files under tests/vectors/.
 
 Usage: tools/wycheproof.py WYCHEPROOF_TESTVECTORS_V1_DIR
 
@@ -28,10 +27,7 @@ import sys
 
 REVISION = "3fa63dd0344abb611f1fb1d77e119938603ea230"
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "tests"))
-from vector_root import vector_root  # noqa: E402
-
-OUT = vector_root() / "wycheproof"
+OUT = ROOT / "tests/vectors/wycheproof"
 FILES = [
     "aes_gcm_test", "chacha20_poly1305_test",
     "hmac_sha256_test", "hmac_sha384_test", "hmac_sha512_test",

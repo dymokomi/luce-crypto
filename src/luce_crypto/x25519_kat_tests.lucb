@@ -136,7 +136,7 @@ func openssl(directory: str) -> usize!:
 ## Optional arguments: the vector directory, then "full" for the
 ## 1,000,000-iteration RFC 7748 chain.
 pub func main(arguments: str[]) -> i32!:
-    let directory = try vector_file.vector_directory(arguments)
+    let directory = arguments[1] if arguments.length > 1 else "tests/vectors"
     let full = arguments.length > 2 and arguments[2] == "full"
     let known = try bearssl(directory)
     var chain: u8[32]

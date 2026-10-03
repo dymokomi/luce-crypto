@@ -219,9 +219,9 @@ func openssl(directory: str, passed: usize*, refused: usize*) -> !:
             assert(rejected(key, iv[..<v], aad[..<a], cipher[..<c], tag), "forged OpenSSL ChaCha20-Poly1305 accepted")
             *refused += 1
 
-## Optional argument: the vector directory (default: see vector_file.vector_directory).
+## Optional argument: the vector directory (default tests/vectors).
 pub func main(arguments: str[]) -> i32!:
-    let directory = try vector_file.vector_directory(arguments)
+    let directory = arguments[1] if arguments.length > 1 else "tests/vectors"
     let chacha_count = try bearssl_chacha(directory)
     let aead_count = try bearssl_aead(directory)
     let rfc = try rfc8439(directory)

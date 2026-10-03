@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""Extract BearSSL's known-answer tests into bearssl/*.txt of the
-luce-crypto-vectors checkout (located by tests/vector_root.py).
+"""Extract BearSSL's known-answer tests into tests/vectors/bearssl/*.txt.
 
 Usage: tools/bearssl_vectors.py BEARSSL_CHECKOUT
 
@@ -24,10 +23,7 @@ import sys
 
 REVISION = "7bea48e5e850ab4cafbe68d3765cdaba13a86d6f"
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "tests"))
-from vector_root import vector_root  # noqa: E402
-
-OUT = vector_root() / "bearssl"
+OUT = ROOT / "tests/vectors/bearssl"
 
 TOKEN = re.compile(r'"(?:[^"\\]|\\.)*"|[A-Za-z_][A-Za-z0-9_]*|0[xX][0-9A-Fa-f]+|\d+|\S', re.S)
 

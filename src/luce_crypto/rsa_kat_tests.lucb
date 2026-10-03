@@ -200,9 +200,9 @@ func openssl(directory: str, counts: Counts*) -> !:
             assert(not accepted, "OpenSSL RSA error case accepted")
             counts.rejected += 1
 
-## Optional argument: the vector directory (default: see vector_file.vector_directory).
+## Optional argument: the vector directory (default tests/vectors).
 pub func main(arguments: str[]) -> i32!:
-    let directory = try vector_file.vector_directory(arguments)
+    let directory = arguments[1] if arguments.length > 1 else "tests/vectors"
     var kat = Counts()
     try bearssl(directory, &kat)
     let powers = try modpow(directory)

@@ -340,9 +340,9 @@ func openssl(directory: str, passed: usize*, failing: usize*, refused: usize*) -
             assert(forged(key[..<k], iv[..<v], aad[..<a], cipher[..<c], tag[..<t]), "failing OpenSSL GCM case accepted")
             *failing += 1
 
-## Optional argument: the vector directory (default: see vector_file.vector_directory).
+## Optional argument: the vector directory (default tests/vectors).
 pub func main(arguments: str[]) -> i32!:
-    let directory = try vector_file.vector_directory(arguments)
+    let directory = arguments[1] if arguments.length > 1 else "tests/vectors"
     var out_of_scope: usize = 0
     let blocks = try block_kats(directory)
     let carlo = try monte_carlo(directory, &out_of_scope)
