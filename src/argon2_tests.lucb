@@ -1,7 +1,7 @@
 ## Native Argon2id known-answer/intermediate-state and differential test driver.
 import argon2id as argon
 import secure
-import luce_std.files
+from luce_std import files
 import memory
 import c
 

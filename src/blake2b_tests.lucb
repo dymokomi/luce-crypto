@@ -2,7 +2,7 @@
 import blake2b as blake
 import sha2 as errors
 import secure
-import luce_std.files
+from luce_std import files
 import memory
 import c
 

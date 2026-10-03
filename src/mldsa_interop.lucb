@@ -1,4 +1,4 @@
-import luce_std.files
+from luce_std import files
 import c
 import mldsa
 

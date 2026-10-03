@@ -1,6 +1,6 @@
 ## Test-only binary vectors. Python/RFC oracles are outside the runtime library.
 import native as crypto
-import luce_std.files
+from luce_std import files
 import memory
 import c
 

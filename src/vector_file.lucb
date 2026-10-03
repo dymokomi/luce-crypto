@@ -2,7 +2,7 @@
 ## (written by tools/wycheproof.py). A line is space-separated fields; "-" is
 ## an empty field. Not exported by the package.
 import c
-import luce_std.files
+from luce_std import files
 import sha2
 
 ## A whole vector file and a cursor over its lines and fields.
