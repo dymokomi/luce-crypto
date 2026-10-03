@@ -50,9 +50,7 @@ func monte_carlo(directory: str, out_of_scope: usize*) -> usize!:
         let k = try lines.decode(1, key)
         discard(try lines.decode(2, buf))
         discard(try lines.decode(3, expected))
-        # LUCE-BUG: nested `for _` loops are rejected (luce-base ae3598c), so
-        # the outer loop names its counter.
-        for _round in 0..<(usize)100:
+        for _ in 0..<(usize)100:
             var schedule = try aes.expand(key[..<k])
             for _ in 0..<(usize)1000:
                 previous = buf

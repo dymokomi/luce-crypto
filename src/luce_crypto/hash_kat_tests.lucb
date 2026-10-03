@@ -247,8 +247,7 @@ func openssl_digest(directory: str, tally: Tally*) -> !:
             let n = try vector_file.decode_hex(text[..<parts[0]], chunk)
             let copies = decimal(text[parts[0] + 1..<parts[1]])
             let count = decimal(text[parts[1] + 1..])
-            # LUCE-BUG: nested `for _` loops are rejected (luce-base ae3598c).
-            for _round in 0..<count:
+            for _ in 0..<count:
                 for _ in 0..<copies:
                     if same(name, b"sha1"):
                         try one.update(chunk[..<n])
