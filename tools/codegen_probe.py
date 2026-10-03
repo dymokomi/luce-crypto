@@ -10,9 +10,9 @@ import re
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
-# Exact names emitted by the pinned Base 0.20 compiler's collision-safe mangler.
-SYMBOLS = ("lb_18luce_crypto_secure_wipe", "lb_18luce_crypto_secure_equal",
-           "lb_18luce_crypto_secure_11select_byte", "probe_dead")
+# Exact names the pinned compiler's mangler emits; the package's own modules have bare names.
+SYMBOLS = ("lb_secure_wipe", "lb_secure_equal",
+           "lb_secure_11select_byte", "probe_dead")
 
 
 def body(text, symbol):
