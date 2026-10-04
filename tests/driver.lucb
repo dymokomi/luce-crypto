@@ -1,7 +1,6 @@
 ## Test-only length-delimited vectors supplied by NIST/Python, no crypto FFI.
 import native as sha2
 from luce_std import files
-import memory
 import c
 
 struct Reader:
@@ -71,8 +70,9 @@ func check(reader: Reader*) -> !:
 
 pub func main(arguments: str[]) -> i32!:
     assert(arguments.length == 2)
-    let data = try files.read_limit((c.str)arguments[1], 16777216)
-    defer free(data) in memory.heap
+    let file = try files.read((c.str)arguments[1], limit = 16777216)
+    defer file.release()
+    let data = file.value
     var reader = Reader(bytes = data)
     assert((str)reader.take(8) == "LCSHA01\0")
     let count = reader.number()

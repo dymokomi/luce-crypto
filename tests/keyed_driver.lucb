@@ -1,7 +1,6 @@
 ## Test-only binary vectors. Python/RFC oracles are outside the runtime library.
 import native as crypto
 from luce_std import files
-import memory
 import c
 
 struct Reader:
@@ -100,8 +99,9 @@ func kdf_case(input: const u8[], salt: const u8[], info: const u8[], prk: const 
 
 pub func main(arguments: str[]) -> i32!:
     assert(arguments.length == 2)
-    let bytes = try files.read_limit((c.str)arguments[1], 16777216)
-    defer free(bytes) in memory.heap
+    let file = try files.read((c.str)arguments[1], limit = 16777216)
+    defer file.release()
+    let bytes = file.value
     var reader = Reader(data = bytes)
     assert((str)reader.take(8) == "LCKEY01\0")
     let records = reader.number()

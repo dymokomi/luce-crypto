@@ -83,8 +83,9 @@ pub func main(arguments: str[]) -> i32!:
         print("PASS RFC 9106 Argon2id prehash, all three pass states and tag; 1/2/3/4/8 workers")
         return 0
     assert(arguments.length == 2)
-    let bytes = try files.read_limit((c.str)arguments[1], 16777216)
-    defer free(bytes) in memory.heap
+    let file = try files.read((c.str)arguments[1], limit = 16777216)
+    defer file.release()
+    let bytes = file.value
     var reader = Reader(data = bytes)
     assert((str)reader.take(8) == "LCARG01\0")
     let records = reader.number()

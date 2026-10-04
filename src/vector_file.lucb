@@ -2,12 +2,14 @@
 ## (written by tools/wycheproof.py). A line is space-separated fields; "-" is
 ## an empty field. Not exported by the package.
 import c
+import interop
 from luce_std import files
 import sha2
 
 ## A whole vector file and a cursor over its lines and fields.
 pub struct Lines:
-    var text: u8[]
+    var contents: interop.Owned[const u8[]]?
+    var text: const u8[]
     var line_start: usize
     var line_end: usize
     var next_start: usize
@@ -24,12 +26,14 @@ pub struct Lines:
             path[directory.length + 1 + i] = name.bytes[i]
         let size = directory.length + 1 + name.length
         path[size] = 0
-        return Lines(text = try files.read((c.str)(str)path[..<size]))
+        let contents = try files.read((c.str)(str)path[..<size])
+        return Lines(contents = contents, text = contents.value)
 
     ## Release the file contents.
     pub mutating func close():
-        if self.text.length > 0:
-            free(self.text)
+        if let contents = self.contents:
+            contents.release()
+        self.contents = none
         self.text = self.text[..<0]
 
     ## Advance to the next nonempty line; false at the end of the file.
