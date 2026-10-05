@@ -7,6 +7,7 @@ import aes
 import aead
 import secure
 import sha2
+import memory
 
 pub let invalid = sha2.invalid
 pub let length_exceeded = sha2.length_exceeded
@@ -60,11 +61,11 @@ struct Ghash:
     var h0: u64
     var h1: u64
 
-    static func start(h: const u8[]) -> Ghash:
+    func start(h: const u8[]) -> Ghash:
         return Ghash(h1 = load64(h, 0), h0 = load64(h, 8))
 
     ## Absorb one 16-byte block: Y = (Y xor X) * H in GF(2^128).
-    mutating func block(x1: u64, x0: u64):
+    func block(x1: u64, x0: u64):
         let y1 = self.y1 ^ x1
         let y0 = self.y0 ^ x0
         let h0 = self.h0
@@ -104,7 +105,7 @@ struct Ghash:
         self.y1 = v3
 
     ## Absorb data, zero-padding the final partial block.
-    mutating func absorb(data: const u8[]):
+    func absorb(data: const u8[]):
         var at: usize = 0
         while data.length - at >= 16:
             self.block(load64(data, at), load64(data, at + 8))
@@ -117,13 +118,13 @@ struct Ghash:
             secure.wipe(tail)
 
     ## Finish with the bit lengths of the AAD and ciphertext.
-    mutating func finish(aad_size: usize, text_size: usize, out: u8[]):
+    func finish(aad_size: usize, text_size: usize, out: u8[]):
         self.block((u64)aad_size << 3, (u64)text_size << 3)
         store64(out, 0, self.y1)
         store64(out, 8, self.y0)
 
-    mutating func wipe():
-        secure.wipe(u8[]((u8*)&self, sizeof(Ghash)))
+    func wipe():
+        secure.wipe(u8[]((u8*)&self, memory.size_of(Ghash)))
 
 ## GHASH as BearSSL's `br_ghash` exposes it: absorb `data` (zero-padded to
 ## whole blocks) into the 16-byte accumulator `y` under subkey `h`. For tests
@@ -173,7 +174,7 @@ func compute_tag(key: const aes.Key*, h: const u8[], prefix: const u8[], counter
     state.finish(aad.length, ciphertext.length, s)
     var mask: u8[16]
     defer secure.wipe(mask)
-    discard(try aes.ctr32(key, prefix, counter, s, mask))
+    _ = try aes.ctr32(key, prefix, counter, s, mask)
     for i in 0..<tag.length:
         tag[i] = mask[i]
 
@@ -205,7 +206,7 @@ pub func seal(key: const u8[], nonce: const u8[], aad: const u8[], plaintext: co
     try subkey(&schedule, h)
     var prefix: u8[12]
     let counter = pre_counter(h, nonce, prefix)
-    discard(try aes.ctr32(&schedule, prefix, counter +% 1, plaintext, ciphertext))
+    _ = try aes.ctr32(&schedule, prefix, counter +% 1, plaintext, ciphertext)
     try compute_tag(&schedule, h, prefix, counter, aad, ciphertext[..<plaintext.length], tag)
 
 ## Verify the `tag.length`-byte tag, then decrypt `ciphertext` into `plaintext`
@@ -225,4 +226,4 @@ pub func open(key: const u8[], nonce: const u8[], aad: const u8[], ciphertext: c
     try compute_tag(&schedule, h, prefix, counter, aad, ciphertext, expected[..<tag.length])
     if not secure.equal(expected[..<tag.length], tag):
         error(forged, "AES-GCM tag mismatch")
-    discard(try aes.ctr32(&schedule, prefix, counter +% 1, ciphertext, plaintext))
+    _ = try aes.ctr32(&schedule, prefix, counter +% 1, ciphertext, plaintext)

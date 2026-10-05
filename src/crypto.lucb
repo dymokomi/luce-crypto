@@ -26,13 +26,13 @@ pub struct Digest:
         if self.disposed: error(closed, "digest is closed")
         return (str)self.text[..<self.used * 2]
 
-    pub mutating func close():
+    pub func close():
         self = Digest(disposed = true)
 
 pub let digest_type: interop.Type[Digest] = interop.Type[Digest]("Digest", Digest.close, closeable = true)
 
 func snapshot(state: const sha2.Hash*) -> interop.Reference[Digest]!:
-    discard(try state.digest_size())
+    _ = try state.digest_size()
     var reservation = try interop.Reservation[Digest](digest_type)
     errdefer reservation.cancel()
     let result = try new Digest() in memory.heap
@@ -50,16 +50,16 @@ pub struct Hasher:
     pub func init(algorithm: str = "sha256") -> !:
         self.state = try sha2.make_hash(algorithm)
 
-    pub mutating func update(input: const u8[]) -> !:
+    pub func update(input: const u8[]) -> !:
         try self.state.update(input)
 
     pub func digest() -> interop.Reference[Digest]!:
         return try snapshot(&self.state)
 
-    pub mutating func reset() -> !:
+    pub func reset() -> !:
         try self.state.reset()
 
-    pub mutating func close():
+    pub func close():
         self.state.close()
 
 pub let hasher_type: interop.Type[Hasher] = interop.Type[Hasher]("Hasher", Hasher.close, closeable = true)
@@ -83,7 +83,7 @@ pub struct Secret:
     pub func reveal() -> const u8[]!:
         return try self.buffer.bytes()
 
-    pub mutating func close():
+    pub func close():
         self.buffer.close()
 
 pub let secret_type: interop.Type[Secret] = interop.Type[Secret]("Secret", Secret.close, closeable = true)
@@ -109,11 +109,11 @@ pub struct Hmac:
         let owner = try key.get()
         self.engine = try mac.make_hmac(try owner.buffer.bytes(), algorithm)
 
-    pub mutating func update(input: const u8[]) -> !:
+    pub func update(input: const u8[]) -> !:
         try self.engine.update(input)
 
-    pub mutating func finish() -> interop.Reference[Digest]!:
-        discard(try self.engine.size())
+    pub func finish() -> interop.Reference[Digest]!:
+        _ = try self.engine.size()
         var reservation = try interop.Reservation[Digest](digest_type)
         errdefer reservation.cancel()
         let result = try new Digest() in memory.heap
@@ -125,10 +125,10 @@ pub struct Hmac:
             result.text[i * 2 + 1] = digits[(usize)(result.data[i] & 15)]
         return reservation.publish(result, memory.heap)
 
-    pub mutating func verify(expected: const u8[]) -> bool!:
+    pub func verify(expected: const u8[]) -> bool!:
         return try self.engine.verify(expected)
 
-    pub mutating func close():
+    pub func close():
         self.engine.close()
 
 pub let hmac_type: interop.Type[Hmac] = interop.Type[Hmac]("Hmac", Hmac.close, closeable = true)
@@ -168,7 +168,7 @@ pub struct Argon2id:
         if length < 4 or length > 65536 or workers < 1 or workers > 8:
             error(invalid, "Argon2id result/worker bounds")
         let parameters = password_kdf.Parameters(memory_kib = (u32)memory_kib, passes = (u32)passes, lanes = (u32)lanes)
-        discard(try password_kdf.validate(parameters, password_kdf.Limits(), 0, 8, 0, 0, (usize)length, (usize)workers))
+        _ = try password_kdf.validate(parameters, password_kdf.Limits(), 0, 8, 0, 0, (usize)length, (usize)workers)
         self.parameters = parameters
         self.count = (usize)length
         self.workers = (usize)workers
@@ -176,8 +176,8 @@ pub struct Argon2id:
 
     func run(password: const u8[], salt: const u8[], key: const u8[], associated: const u8[]) -> interop.Reference[Secret]!:
         if self.disposed: error(closed, "Argon2id configuration is closed")
-        discard(try password_kdf.validate(self.parameters, password_kdf.Limits(), password.length, salt.length,
-            key.length, associated.length, self.count, self.workers))
+        _ = try password_kdf.validate(self.parameters, password_kdf.Limits(), password.length, salt.length,
+            key.length, associated.length, self.count, self.workers)
         var buffer = try secret.create(self.count)
         password_kdf.derive(password, salt, try buffer.writable(), self.parameters, key, associated, self.workers) catch failure:
             buffer.close()
@@ -194,7 +194,7 @@ pub struct Argon2id:
         let key_owner = try key.get()
         return try self.run(try password_owner.buffer.bytes(), salt, try key_owner.buffer.bytes(), associated)
 
-    pub mutating func close():
+    pub func close():
         self.parameters = password_kdf.Parameters()
         self.count = 0
         self.workers = 0

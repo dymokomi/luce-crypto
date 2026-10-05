@@ -11,7 +11,7 @@ struct Audit: memory.Allocator:
     var releases: usize
     var refuse: bool
 
-    pub mutating func allocate(size: usize, alignment: usize) -> u8[]?:
+    pub func allocate(size: usize, alignment: usize) -> u8[]?:
         assert(self.address == none)
         if self.refuse: return none
         let bytes = self.parent.allocate(size, alignment) else trap("upstream allocation failed")
@@ -20,12 +20,12 @@ struct Audit: memory.Allocator:
         for i in 0..<bytes.length: bytes[i] = 173
         return bytes
 
-    pub mutating func resize(block: u8[], size: usize) -> bool:
-        discard(block)
-        discard(size)
+    pub func resize(block: u8[], size: usize) -> bool:
+        _ = block
+        _ = size
         trap("secret must not resize")
 
-    pub mutating func release(block: u8[]):
+    pub func release(block: u8[]):
         assert(self.address == block.data and self.size == block.length)
         for byte in block: assert(byte == 0, "secret not wiped before allocator release")
         self.parent.release(block)
@@ -52,33 +52,33 @@ func memory_tests() -> !:
         data.close()
         assert(audit.address == none)
         var rejected = false
-        discard(data.bytes() catch failure:
+        _ = data.bytes() catch failure:
             assert(failure.code == crypto.closed)
             rejected = true
-            recover b"")
+            recover b""
         assert(rejected)
     assert(audit.releases == 3)
     var rejected = false
-    discard(secret.random(73, partial_entropy, &audit) catch failure:
+    _ = secret.random(73, partial_entropy, &audit) catch failure:
         assert(failure.code == crypto.invalid)
         rejected = true
-        recover secret.Buffer())
+        recover secret.Buffer()
     assert(rejected and audit.address == none and audit.releases == 4)
     var generated = try secret.random(73, known_entropy, &audit)
     for i in 0..<73: assert((try generated.bytes())[i] == (u8)i)
     generated.close()
     audit.refuse = true
     rejected = false
-    discard(secret.create(73, &audit) catch failure:
+    _ = secret.create(73, &audit) catch failure:
         assert(failure.code == memory.exhausted)
         rejected = true
-        recover secret.Buffer())
+        recover secret.Buffer()
     assert(rejected and audit.address == none and audit.releases == 5)
     rejected = false
-    discard(secret.create(65537, &audit) catch failure:
+    _ = secret.create(65537, &audit) catch failure:
         assert(failure.code == crypto.invalid)
         rejected = true
-        recover secret.Buffer())
+        recover secret.Buffer()
     assert(rejected and audit.address == none)
     audit.refuse = false
     var input: u8[73]
@@ -117,19 +117,19 @@ func boundaries() -> !:
         try state.update(b"abc")
         let count = try state.digest_size()
         var rejected = false
-        discard(state.finish(output[..<count - 1]) catch failure:
+        _ = state.finish(output[..<count - 1]) catch failure:
             assert(failure.code == crypto.invalid)
             rejected = true
-            recover (usize)0)
+            recover (usize)0
         assert(rejected)
-        discard(try state.finish(output))
-        discard(try crypto.digest(b"abc", key, algorithm))
+        _ = try state.finish(output)
+        _ = try crypto.digest(b"abc", key, algorithm)
         assert(secure.equal(output[..<count], key[..<count]))
         rejected = false
-        discard(state.finish(output) catch failure:
+        _ = state.finish(output) catch failure:
             assert(failure.code == crypto.closed)
             rejected = true
-            recover (usize)0)
+            recover (usize)0
         assert(rejected)
         for invalid_case in 0..<8:
             for i in 0..<output.length: output[i] = 173
@@ -147,10 +147,10 @@ func boundaries() -> !:
                     assert(failure.code == crypto.invalid)
                     rejected = true
             elif invalid_case == 3:
-                discard(crypto.hkdf_extract(b"input", b"salt", output[..<count - 1], algorithm) catch failure:
+                _ = crypto.hkdf_extract(b"input", b"salt", output[..<count - 1], algorithm) catch failure:
                     assert(failure.code == crypto.invalid)
                     rejected = true
-                    recover (usize)0)
+                    recover (usize)0
             elif invalid_case == 4:
                 crypto.hkdf_expand(output[..<count], b"", output[1..<count + 1], algorithm) catch failure:
                     assert(failure.code == crypto.invalid)
@@ -160,11 +160,11 @@ func boundaries() -> !:
                     assert(failure.code == crypto.invalid)
                     rejected = true
             else:
-                discard(crypto.hkdf_extract(output[..<count] if invalid_case == 6 else b"input",
+                _ = crypto.hkdf_extract(output[..<count] if invalid_case == 6 else b"input",
                     output[..<count] if invalid_case == 7 else b"salt", output[1..<count + 1], algorithm) catch failure:
                     assert(failure.code == crypto.invalid)
                     rejected = true
-                    recover (usize)0)
+                    recover (usize)0
             assert(rejected)
             for byte in output: assert(byte == 173)
         for input_index in 0..<3:
@@ -178,14 +178,14 @@ func boundaries() -> !:
             for byte in output: assert(byte == 173)
     for algorithm in ["", "SHA256", "sha1", "sha512/256"]:
         var rejected = false
-        discard(crypto.make_hmac(b"key", algorithm) catch failure:
+        _ = crypto.make_hmac(b"key", algorithm) catch failure:
             assert(failure.code == crypto.invalid)
             rejected = true
-            recover crypto.Hmac())
+            recover crypto.Hmac()
         assert(rejected)
 
 func worker(raw: void*?):
-    discard(raw)
+    _ = raw
     for iteration in 0..<32:
         var owned_key = crypto.random_secret(73) catch failure: trap(failure.message)
         defer owned_key.close()
@@ -202,7 +202,7 @@ func worker(raw: void*?):
             secure.wipe(derived)
 
 pub func main(arguments: str[]) -> i32!:
-    discard(arguments)
+    _ = arguments
     try memory_tests()
     try boundaries()
     var workers: thread.Handle[8]

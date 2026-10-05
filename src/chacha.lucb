@@ -1,6 +1,7 @@
 ## RFC 8439 ChaCha20 and the HChaCha20 construction used by XChaCha20.
 import secure
 import sha2
+import memory
 
 func rotl(x: u32, n: u32) -> u32:
     return (x << n) | (x >> (32 - n))
@@ -55,8 +56,8 @@ pub func block(key: const u8[], counter: u32, nonce: const u8[], output: u8[]) -
         error(sha2.invalid, "ChaCha20 block requires a 32-byte key, 12-byte nonce and 64-byte output")
     var s: u32[16]
     var w: u32[16]
-    defer secure.wipe(u8[]((u8*)&s[0], sizeof(s)))
-    defer secure.wipe(u8[]((u8*)&w[0], sizeof(w)))
+    defer secure.wipe(u8[]((u8*)&s[0], memory.size_of(s)))
+    defer secure.wipe(u8[]((u8*)&w[0], memory.size_of(w)))
     init_state(s, key, counter, nonce)
     for i in 0..<(usize)16: w[i] = s[i]
     rounds(w)
@@ -66,7 +67,7 @@ pub func hchacha20(key: const u8[], nonce: const u8[], output: u8[]) -> !:
     if key.length != 32 or nonce.length != 16 or output.length < 32:
         error(sha2.invalid, "HChaCha20 requires a 32-byte key, 16-byte nonce and 32-byte output")
     var s: u32[16]
-    defer secure.wipe(u8[]((u8*)&s[0], sizeof(s)))
+    defer secure.wipe(u8[]((u8*)&s[0], memory.size_of(s)))
     s[0] = 0x61707865
     s[1] = 0x3320646e
     s[2] = 0x79622d32

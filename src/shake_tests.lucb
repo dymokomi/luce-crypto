@@ -22,7 +22,7 @@ func equal(a: const u8[], b: const u8[]):
     for i in 0..<a.length: assert(a[i] == b[i], "SHAKE mismatch")
 
 pub func main(arguments: str[]) -> i32!:
-    discard(arguments)
+    _ = arguments
     var out: u8[64]
     var expect: u8[64]
     try shake.shake128(b"", out[..<32])

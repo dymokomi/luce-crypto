@@ -25,8 +25,8 @@ func block_kats(directory: str) -> usize!:
     var count: usize = 0
     while lines.next():
         let k = try lines.decode(0, key)
-        discard(try lines.decode(1, plain))
-        discard(try lines.decode(2, cipher))
+        _ = try lines.decode(1, plain)
+        _ = try lines.decode(2, cipher)
         var schedule = try aes.expand(key[..<k])
         try aes.encrypt_block(&schedule, plain, out)
         schedule.wipe()
@@ -48,8 +48,8 @@ func monte_carlo(directory: str, out_of_scope: usize*) -> usize!:
         var previous: u8[16]
         var expected: u8[16]
         let k = try lines.decode(1, key)
-        discard(try lines.decode(2, buf))
-        discard(try lines.decode(3, expected))
+        _ = try lines.decode(2, buf)
+        _ = try lines.decode(3, expected)
         for _ in 0..<(usize)100:
             var schedule = try aes.expand(key[..<k])
             for _ in 0..<(usize)1000:
@@ -81,14 +81,14 @@ func ctr_kats(directory: str) -> usize!:
         var cipher: u8[200]
         var buf: u8[200]
         let k = try lines.decode(0, key)
-        discard(try lines.decode(1, iv))
+        _ = try lines.decode(1, iv)
         let n = try lines.decode(2, plain)
-        discard(try lines.decode(3, cipher))
+        _ = try lines.decode(3, cipher)
         var schedule = try aes.expand(key[..<k])
         defer schedule.wipe()
-        discard(try aes.ctr32(&schedule, iv, 1, plain[..<n], buf[..<n]))
+        _ = try aes.ctr32(&schedule, iv, 1, plain[..<n], buf[..<n])
         assert(same(buf[..<n], cipher[..<n]), "AES-CTR mismatch (1)")
-        discard(try aes.ctr32(&schedule, iv, 1, buf[..<n], buf[..<n]))
+        _ = try aes.ctr32(&schedule, iv, 1, buf[..<n], buf[..<n])
         assert(same(buf[..<n], plain[..<n]), "AES-CTR mismatch (2)")
         for step in [(usize)32, 16]:
             var counter: u32 = 1
@@ -138,10 +138,10 @@ func ghash_kats(directory: str) -> usize!:
         var c: u8[100]
         var expected: u8[16]
         var y: u8[16]
-        discard(try lines.decode(0, h))
+        _ = try lines.decode(0, h)
         let a_size = try lines.decode(1, a)
         let c_size = try lines.decode(2, c)
-        discard(try lines.decode(3, expected))
+        _ = try lines.decode(3, expected)
         try gcm.ghash(y, h, a[..<a_size])
         try gcm.ghash(y, h, c[..<c_size])
         var lengths: u8[16]
@@ -162,7 +162,7 @@ func ghash_kats(directory: str) -> usize!:
         key[3] = (u8)(u & 0xff)
         var zeros: u8[1056]
         var buf: u8[1056]
-        discard(try chacha.xor(key, nonce, 1, zeros, buf))
+        _ = try chacha.xor(key, nonce, 1, zeros, buf)
         var y0: u8[16]
         var y1: u8[16]
         for i in 0..<(usize)16:
@@ -215,8 +215,8 @@ func gcm_kats(directory: str) -> usize!:
         let n = try lines.decode(1, plain)
         let a = try lines.decode(2, aad)
         let v = try lines.decode(3, iv)
-        discard(try lines.decode(4, cipher))
-        discard(try lines.decode(5, tag))
+        _ = try lines.decode(4, cipher)
+        _ = try lines.decode(5, tag)
         try round_trip(key[..<k], iv[..<v], aad[..<a], plain[..<n], cipher[..<n], tag)
         for i in 0..<a:
             aad[i] ^= 0x04
@@ -254,7 +254,7 @@ func wycheproof(directory: str, valid: usize*, invalid: usize*) -> !:
         let v = try lines.decode(2, iv)
         let a = try lines.decode(3, aad)
         let n = try lines.decode(4, msg)
-        discard(try lines.decode(5, ct))
+        _ = try lines.decode(5, ct)
         let t = try lines.decode(6, tag)
         if try lines.is(0, "valid"):
             try round_trip(key[..<k], iv[..<v], aad[..<a], msg[..<n], ct[..<n], tag[..<t])
@@ -268,7 +268,7 @@ func wycheproof(directory: str, valid: usize*, invalid: usize*) -> !:
 ## a missing part ends the list.
 func cavp(directory: str, name: str, valid: usize*, invalid: usize*) -> !:
     var lines = vector_file.Lines.open(directory, name) catch failure:
-        discard(failure)
+        _ = failure
         return
     defer lines.close()
     var key: u8[32]

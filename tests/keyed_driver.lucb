@@ -7,19 +7,19 @@ struct Reader:
     var data: const u8[]
     var position: usize
 
-    mutating func take(count: usize) -> const u8[]:
+    func take(count: usize) -> const u8[]:
         assert(count <= self.data.length - self.position)
         let start = self.position
         self.position += count
         return self.data[start..<self.position]
 
-    mutating func number() -> usize:
+    func number() -> usize:
         let bytes = self.take(4)
         var value: u32
         for i in 0..<(usize)4: value |= (u32)bytes[i] << (i * 8)
         return (usize)value
 
-    mutating func blob() -> const u8[]:
+    func blob() -> const u8[]:
         let count = self.number()
         assert(count <= 65536)
         return self.take(count)
@@ -54,12 +54,12 @@ func mac_case(key: const u8[], data: const u8[], expected: const u8[], algorithm
             at += take
         assert((try state.size()) == count)
         var rejected = false
-        discard(state.finish(output[..<count - 1]) catch failure:
+        _ = state.finish(output[..<count - 1]) catch failure:
             assert(failure.code == crypto.invalid)
             rejected = true
-            recover (usize)0)
+            recover (usize)0
         assert(rejected)
-        discard(try state.finish(output))
+        _ = try state.finish(output)
         equal(output[..<count], expected)
         rejected = false
         state.update(b"") catch failure:

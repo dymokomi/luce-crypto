@@ -54,7 +54,7 @@ func bearssl(directory: str, counts: Counts*) -> !:
         let m = try lines.decode(1, message)
         let s = try lines.decode(2, salt)
         let k = try lines.decode(3, signature)
-        discard(try sha1.digest(message[..<m], digest))
+        _ = try sha1.digest(message[..<m], digest)
         assert(try rsa.verify_pss(&key, "sha1", digest, signature[..<k], s), "BearSSL PSS KAT rejected")
         assert(try rsa.verify_pss(&key, "sha1", digest, signature[..<k], rsa.any_salt), "BearSSL PSS KAT rejected (auto salt)")
         signature[k // 2] ^= 1
@@ -75,7 +75,7 @@ func bearssl(directory: str, counts: Counts*) -> !:
         var second: u8[128]
         if try lines.is(0, "public"):
             let size = try lines.decode(1, first)
-            discard(try lines.decode(2, second))
+            _ = try lines.decode(2, second)
             let base = try bignum.Natural.from_bytes(first[..<size])
             let result = try bignum.modular_power(&base, e[..<3], &modulus)
             var out: u8[128]
@@ -100,9 +100,9 @@ func modpow(directory: str) -> usize!:
         var e: u8[64]
         var expected: u8[64]
         let size = try lines.decode(0, m)
-        discard(try lines.decode(1, x))
-        discard(try lines.decode(2, e))
-        discard(try lines.decode(3, expected))
+        _ = try lines.decode(1, x)
+        _ = try lines.decode(2, e)
+        _ = try lines.decode(3, expected)
         let modulus = try bignum.Natural.from_bytes(m[..<size])
         let base = try bignum.Natural.from_bytes(x[..<size])
         let result = try bignum.modular_power(&base, e[..<size], &modulus)

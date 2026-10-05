@@ -25,7 +25,7 @@ func equal(a: const u8[], b: const u8[]):
     for i in 0..<a.length: assert(a[i] == b[i], "mismatch")
 
 pub func main(arguments: str[]) -> i32!:
-    discard(arguments)
+    _ = arguments
     var key: u8[32]
     var nonce: u8[12]
     var block: u8[64]

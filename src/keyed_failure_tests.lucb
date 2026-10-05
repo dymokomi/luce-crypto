@@ -19,13 +19,13 @@ struct Heap: memory.Allocator:
     var erased: usize
     var erased_matrices: usize
 
-    mutating func arm(index: usize, persistent: bool = false):
+    func arm(index: usize, persistent: bool = false):
         self.attempts = 0
         self.refused = 0
         self.fail_at = index
         self.persistent = persistent
 
-    pub mutating func allocate(size: usize, alignment: usize) -> u8[]?:
+    pub func allocate(size: usize, alignment: usize) -> u8[]?:
         self.attempts += 1
         if self.fail_at > 0 and (self.attempts == self.fail_at or (self.persistent and self.attempts >= self.fail_at)):
             self.refused += 1
@@ -40,12 +40,12 @@ struct Heap: memory.Allocator:
                 return block
         trap("allocation ledger exhausted")
 
-    pub mutating func resize(block: u8[], size: usize) -> bool:
-        discard(block)
-        discard(size)
+    pub func resize(block: u8[], size: usize) -> bool:
+        _ = block
+        _ = size
         trap("unexpected resize")
 
-    pub mutating func release(block: u8[]):
+    pub func release(block: u8[]):
         for i in 0..<self.blocks.length:
             if self.blocks[i].address == block.data:
                 assert(self.blocks[i].size == block.length and self.live > 0)
@@ -95,7 +95,7 @@ func creation(heap: Heap*, kind: usize, key: interop.Reference[crypto.Secret], i
     return attempts
 
 pub func main(arguments: str[]) -> i32!:
-    discard(arguments)
+    _ = arguments
     var input: u8[73]
     for i in 0..<input.length: input[i] = (u8)i
     let key = try crypto.secret_from_bytes(input)
@@ -118,10 +118,10 @@ pub func main(arguments: str[]) -> i32!:
     for persistent in [false, true]:
         heap.arm(1, persistent)
         var refused = false
-        discard(native.make_hmac(input) catch failure:
+        _ = native.make_hmac(input) catch failure:
             assert(failure.code == memory.exhausted)
             refused = true
-            recover native.Hmac())
+            recover native.Hmac()
         assert(refused and heap.attempts == 1 and heap.refused == 1)
         heap.arm(0)
         heap.clean()
@@ -144,10 +144,10 @@ pub func main(arguments: str[]) -> i32!:
             cases += 1
     heap.arm(0)
     var rejected = false
-    discard(native.make_hmac(input, "unknown") catch failure:
+    _ = native.make_hmac(input, "unknown") catch failure:
         assert(failure.code == native.invalid)
         rejected = true
-        recover native.Hmac())
+        recover native.Hmac()
     assert(rejected and heap.attempts == 1)
     heap.clean()
     heap.arm(0)

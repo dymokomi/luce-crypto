@@ -7,7 +7,7 @@ func equal(a: const u8[], b: const u8[]):
     for i in 0..<a.length: assert(a[i] == b[i])
 
 func worker(raw: void*?):
-    discard(raw)
+    _ = raw
     for iteration in 0..<32:
         for algorithm in ["sha256", "sha384", "sha512"]:
             var state = sha2.make_hash(algorithm) catch failure: trap(failure.message)
@@ -28,17 +28,17 @@ func worker(raw: void*?):
             equal(bytes, whole[..<count])
 
 pub func main(arguments: str[]) -> i32!:
-    discard(arguments)
+    _ = arguments
     for algorithm in ["sha256", "sha384", "sha512"]:
         var state = try sha2.make_hash(algorithm)
         var out: u8[66]
         for i in 0..<out.length: out[i] = 173
         let count = try state.digest_size()
         var rejected = false
-        discard(state.digest(out[..<count - 1]) catch failure:
+        _ = state.digest(out[..<count - 1]) catch failure:
             assert(failure.code == sha2.invalid)
             rejected = true
-            recover (usize)0)
+            recover (usize)0
         assert(rejected)
         for value in out: assert(value == 173)
         try state.update(b"abc")
@@ -52,14 +52,14 @@ pub func main(arguments: str[]) -> i32!:
         try state.update(b"def")
         try branched.update(b"xyz")
         assert((try state.digest(another)) == count)
-        discard(try sha2.digest(b"abcdef", out, algorithm))
+        _ = try sha2.digest(b"abcdef", out, algorithm)
         equal(out[..<count], another[..<count])
-        discard(try branched.digest(another))
-        discard(try sha2.digest(b"abcxyz", out, algorithm))
+        _ = try branched.digest(another)
+        _ = try sha2.digest(b"abcxyz", out, algorithm)
         equal(out[..<count], another[..<count])
         try state.reset()
-        discard(try state.digest(another))
-        discard(try sha2.digest(b"", out, algorithm))
+        _ = try state.digest(another)
+        _ = try sha2.digest(b"", out, algorithm)
         equal(out[..<count], another[..<count])
         state.close()
         state.close()
@@ -74,37 +74,37 @@ pub func main(arguments: str[]) -> i32!:
             rejected = true
         assert(rejected)
         rejected = false
-        discard(state.digest(out) catch failure:
+        _ = state.digest(out) catch failure:
             assert(failure.code == sha2.closed)
             rejected = true
-            recover (usize)0)
+            recover (usize)0
         assert(rejected)
     for algorithm in ["", "SHA256", "sha1", "sha512/256"]:
         var rejected = false
-        discard(sha2.make_hash(algorithm) catch failure:
+        _ = sha2.make_hash(algorithm) catch failure:
             assert(failure.code == sha2.invalid)
             rejected = true
-            recover sha2.Hash())
+            recover sha2.Hash()
         assert(rejected)
     ## Synthetic counter boundaries, not a claim to have hashed 2^125 bytes.
     let maximum: u64 = 0x1fffffffffffffff
     let small = try sha2.add_length(sha2.Length(low = maximum - 1), 1, true)
     assert(small.low == maximum and small.high == 0)
     var rejected = false
-    discard(sha2.add_length(small, 1, true) catch failure:
+    _ = sha2.add_length(small, 1, true) catch failure:
         assert(failure.code == sha2.length_exceeded)
         rejected = true
-        recover sha2.Length())
+        recover sha2.Length()
     assert(rejected)
     let carry = try sha2.add_length(sha2.Length(low = 0xffffffffffffffff, high = 4), 1, false)
     assert(carry.low == 0 and carry.high == 5)
     let large = try sha2.add_length(sha2.Length(low = 0xfffffffffffffffe, high = maximum), 1, false)
     assert(large.low == 0xffffffffffffffff and large.high == maximum)
     rejected = false
-    discard(sha2.add_length(large, 1, false) catch failure:
+    _ = sha2.add_length(large, 1, false) catch failure:
         assert(failure.code == sha2.length_exceeded)
         rejected = true
-        recover sha2.Length())
+        recover sha2.Length()
     assert(rejected)
     var bits: u8[16]
     sha2.write_bit_length(large, bits)

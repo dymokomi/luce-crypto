@@ -7,13 +7,13 @@ struct Reader:
     var bytes: const u8[]
     var position: usize
 
-    mutating func take(count: usize) -> const u8[]:
+    func take(count: usize) -> const u8[]:
         assert(count <= self.bytes.length - self.position)
         let start = self.position
         self.position += count
         return self.bytes[start..<self.position]
 
-    mutating func number() -> usize:
+    func number() -> usize:
         let data = self.take(4)
         var value: u32
         for i in 0..<(usize)4: value |= (u32)data[i] << (i * 8)
@@ -52,20 +52,20 @@ func check(reader: Reader*) -> !:
                 borrowed[i + 1] = 221
             try state.update(b"")
             at += take
-        discard(try state.digest(output))
+        _ = try state.digest(output)
         for i in 0..<count: assert(output[i] == expected[i])
     var state = try sha2.make_hash(algorithm)
     try state.update(data[..<size // 2])
-    discard(try state.digest(output))
+    _ = try state.digest(output)
     for i in 0..<count: assert(output[i] == prefix[i])
     var copy = state
     try state.update(data[size // 2..])
-    discard(try state.digest(output))
+    _ = try state.digest(output)
     for i in 0..<count: assert(output[i] == expected[i])
-    discard(try copy.digest(output))
+    _ = try copy.digest(output)
     for i in 0..<count: assert(output[i] == prefix[i])
     try copy.update(data[size // 2..])
-    discard(try copy.digest(output))
+    _ = try copy.digest(output)
     for i in 0..<count: assert(output[i] == expected[i])
 
 pub func main(arguments: str[]) -> i32!:

@@ -26,7 +26,7 @@ pub struct Limits:
 pub struct Cancellation:
     var requested: @u32
 
-    pub mutating func request():
+    pub func request():
         self.requested.store(1, .release)
 
     pub func is_requested() -> bool:
@@ -100,9 +100,9 @@ func compress(left: const u64[], right: const u64[], output: u64[], xor_old: boo
     var original: u64[128]
     var words: u64[128]
     var column: u64[16]
-    defer secure.wipe(u8[]((u8*)&original[0], sizeof(original)))
-    defer secure.wipe(u8[]((u8*)&words[0], sizeof(words)))
-    defer secure.wipe(u8[]((u8*)&column[0], sizeof(column)))
+    defer secure.wipe(u8[]((u8*)&original[0], memory.size_of(original)))
+    defer secure.wipe(u8[]((u8*)&words[0], memory.size_of(words)))
+    defer secure.wipe(u8[]((u8*)&column[0], memory.size_of(column)))
     for i in 0..<(usize)128:
         words[i] = left[i] ^ right[i]
         original[i] = words[i] ^ (output[i] if xor_old else 0)
@@ -153,8 +153,8 @@ func fill_segment(job: const Job*, lane: usize):
     var addresses: u64[128]
     var input: u64[128]
     var zero: u64[128]
-    defer secure.wipe(u8[]((u8*)&addresses[0], sizeof(addresses)))
-    defer secure.wipe(u8[]((u8*)&input[0], sizeof(input)))
+    defer secure.wipe(u8[]((u8*)&addresses[0], memory.size_of(addresses)))
+    defer secure.wipe(u8[]((u8*)&input[0], memory.size_of(input)))
     if independent:
         input[0] = (u64)job.pass
         input[1] = (u64)lane
@@ -192,8 +192,8 @@ func start_worker(entry: func(void*?) -> unit, context: void*?) -> thread.Handle
     return try thread.spawn(entry, context, stack = 524288, name = "argon2id")
 
 func no_observer(pass: usize, matrix: const u64[]):
-    discard(pass)
-    discard(matrix)
+    _ = pass
+    _ = matrix
 
 ## Package-internal fault/known-answer hooks. Not exported by crypto_native or
 ## the Luce facade. Allocator and cancellation objects must outlive this call.
@@ -240,7 +240,7 @@ pub func derive_controlled(password: const u8[], salt: const u8[], output: u8[],
         key.length, associated.length, output.length, workers)
     try check_cancel(controls)
     let selected = controls.allocator else memory.heap
-    let matrix = try alloc u64[blocks * 128] in selected
+    let matrix = try new u64[blocks * 128] --- in selected
     defer release_matrix(matrix, selected)
     var seed: u8[72]
     var bytes: u8[1024]

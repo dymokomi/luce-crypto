@@ -16,7 +16,7 @@ var cancel_after_pass: bool
 var observed_passes: usize
 
 func no_entry(context: void*?):
-    discard(context)
+    _ = context
     trap("missing test worker")
 
 var real_entry: func(void*?) -> unit = no_entry
@@ -24,7 +24,7 @@ var real_entry: func(void*?) -> unit = no_entry
 func tracked_entry(context: void*?):
     if cancel_in_worker: test_request.request()
     real_entry(context)
-    discard(completed.add(1, .release))
+    _ = completed.add(1, .release)
 
 func tracked_spawn(entry: func(void*?) -> unit, context: void*?) -> thread.Handle!:
     attempts += 1
@@ -47,7 +47,7 @@ struct Audit: memory.Allocator:
     var releases: usize
     var refuse: bool
 
-    pub mutating func allocate(size: usize, alignment: usize) -> u8[]?:
+    pub func allocate(size: usize, alignment: usize) -> u8[]?:
         self.allocations += 1
         assert(self.address == none)
         if self.refuse: return none
@@ -57,12 +57,12 @@ struct Audit: memory.Allocator:
         for i in 0..<bytes.length: bytes[i] = 173
         return bytes
 
-    pub mutating func resize(block: u8[], size: usize) -> bool:
-        discard(block)
-        discard(size)
+    pub func resize(block: u8[], size: usize) -> bool:
+        _ = block
+        _ = size
         trap("matrix must not resize")
 
-    pub mutating func release(block: u8[]):
+    pub func release(block: u8[]):
         assert(completed.load(.acquire) == (u32)successful, "free before worker completion")
         assert(self.address == block.data and self.size == block.length)
         for byte in block: assert(byte == 0, "matrix not wiped before release")
@@ -146,10 +146,10 @@ func admission() -> !:
         elif path == 24: limits.lanes = 3
         else: limits.output_bytes = 31
         var rejected = false
-        discard(argon.validate(parameters, limits, password, salt, key, associated, output, workers) catch failure:
+        _ = argon.validate(parameters, limits, password, salt, key, associated, output, workers) catch failure:
             assert(failure.code == errors.invalid)
             rejected = true
-            recover (usize)0)
+            recover (usize)0
         assert(rejected)
     ## Exercise the real entry point too: rejected costs must not allocate/read.
     var audit = Audit(parent = memory.heap)
@@ -173,10 +173,10 @@ func admission() -> !:
     var narrow_budget = wide_limits
     narrow_budget.work_kib_passes -= 1
     rejected = false
-    discard(argon.validate(wide, narrow_budget, 0, 8, 0, 0, 32, 1) catch failure:
+    _ = argon.validate(wide, narrow_budget, 0, 8, 0, 0, 32, 1) catch failure:
         assert(failure.code == errors.invalid)
         rejected = true
-        recover (usize)0)
+        recover (usize)0
     assert(rejected)
 
 func overlap() -> !:
@@ -195,7 +195,7 @@ func overlap() -> !:
         for i in 32..<64: assert(data[i] == 173)
 
 func independent_entry(raw: void*?):
-    discard(raw)
+    _ = raw
     let parameters = argon.Parameters(memory_kib = 32, passes = 2, lanes = 4)
     var serial: u8[32]
     var parallel: u8[32]
@@ -207,7 +207,7 @@ func independent_entry(raw: void*?):
         assert(secure.equal(serial, parallel))
 
 pub func main(arguments: str[]) -> i32!:
-    discard(arguments)
+    _ = arguments
     try admission()
     try memory_paths()
     try overlap()

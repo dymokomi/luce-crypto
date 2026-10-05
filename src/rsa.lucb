@@ -65,18 +65,18 @@ struct Digest:
     var narrow: sha1.Hash
     var legacy: bool
 
-    static func start(algorithm: str) -> Digest!:
+    func start(algorithm: str) -> Digest!:
         if algorithm == "sha1":
             return Digest(wide = sha2.Hash(), narrow = sha1.make(), legacy = true)
         return Digest(wide = try sha2.make_hash(algorithm), narrow = sha1.make())
 
-    mutating func update(data: const u8[]) -> !:
+    func update(data: const u8[]) -> !:
         if self.legacy:
             try self.narrow.update(data)
         else:
             try self.wide.update(data)
 
-    mutating func finish(out: u8[]) -> usize!:
+    func finish(out: u8[]) -> usize!:
         if self.legacy:
             return try self.narrow.finish(out)
         return try self.wide.finish(out)
@@ -107,7 +107,7 @@ func open_signature(key: const PublicKey*, signature: const u8[], out: u8[]) -> 
         return false
     let m = try bignum.power(&key.context, &s, key.exponent[..<key.exponent_size])
     m.to_bytes(out) catch failure:
-        discard(failure)
+        _ = failure
         return false
     return true
 
@@ -163,7 +163,7 @@ pub func verify_pss(key: const PublicKey*, algorithm: str, digest: const u8[], s
     mask_algorithm: str = "") -> bool!:
     let size = try digest_size(algorithm)
     let mgf = algorithm if mask_algorithm.length == 0 else mask_algorithm
-    discard(try digest_size(mgf))
+    _ = try digest_size(mgf)
     if digest.length != size:
         return false
     let em_bits = key.bits - 1
@@ -200,7 +200,7 @@ pub func verify_pss(key: const PublicKey*, algorithm: str, digest: const u8[], s
     try state.update(digest)
     try state.update(db[db_size - salt..<db_size])
     var expected: u8[64]
-    discard(try state.finish(expected))
+    _ = try state.finish(expected)
     var difference: u8 = 0
     for i in 0..<size:
         difference |= expected[i] ^ em[db_size + i]

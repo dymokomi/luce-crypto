@@ -6,6 +6,7 @@
 ## on the scalar or on the point.
 import secure
 import sha2
+import memory
 
 let mask30: u32 = 0x3fffffff
 
@@ -176,10 +177,10 @@ pub func scalarmult(out: u8[], scalar: const u8[], point: const u8[]) -> !:
     var e: u32[9]
     var da: u32[9]
     var cb: u32[9]
-    defer secure.wipe(u8[]((u8*)&x2[0], sizeof(x2)))
-    defer secure.wipe(u8[]((u8*)&z2[0], sizeof(z2)))
-    defer secure.wipe(u8[]((u8*)&x3[0], sizeof(x3)))
-    defer secure.wipe(u8[]((u8*)&z3[0], sizeof(z3)))
+    defer secure.wipe(u8[]((u8*)&x2[0], memory.size_of(x2)))
+    defer secure.wipe(u8[]((u8*)&z2[0], memory.size_of(z2)))
+    defer secure.wipe(u8[]((u8*)&x3[0], memory.size_of(x3)))
+    defer secure.wipe(u8[]((u8*)&z3[0], memory.size_of(z3)))
     decode(x1, u)
     x3 = x1
     x2[0] = 1

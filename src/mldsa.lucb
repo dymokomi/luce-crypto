@@ -3,6 +3,7 @@ import shake
 import mldsa_ntt as ntt
 import sha2
 import secure
+import memory
 
 pub let invalid = sha2.invalid
 pub let k: usize = 6
@@ -149,9 +150,9 @@ pub func keygen(seed: const u8[], pk: u8[], sk: u8[]) -> !:
     let t0_at = s2_at + k * 128
     for i in 0..<k:
         pack_t0(t0[i * ntt.n..<(i + 1) * ntt.n], sk[t0_at + i * 416..<t0_at + (i + 1) * 416])
-    secure.wipe(u8[]((u8*)&s1[0], sizeof(s1)))
-    secure.wipe(u8[]((u8*)&s1hat[0], sizeof(s1hat)))
-    secure.wipe(u8[]((u8*)&s2[0], sizeof(s2)))
+    secure.wipe(u8[]((u8*)&s1[0], memory.size_of(s1)))
+    secure.wipe(u8[]((u8*)&s1hat[0], memory.size_of(s1hat)))
+    secure.wipe(u8[]((u8*)&s2[0], memory.size_of(s2)))
     secure.wipe(expanded)
     secure.wipe(key)
     secure.wipe(rhoprime)

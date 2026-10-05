@@ -2,6 +2,7 @@
 ## Value state: no allocation, borrowed pointers, global mutable state or FFI.
 import constants
 import secure
+import memory
 
 pub let invalid: ErrorCode = ErrorCode.package(1)
 pub let closed: ErrorCode = ErrorCode.package(2)
@@ -15,7 +16,7 @@ func r64(x: u64, n: u64) -> u64:
 
 func block32(state: u32[], input: const u8[]):
     var w: u32[64]
-    defer secure.wipe(u8[]((u8*)&w[0], sizeof(w)))
+    defer secure.wipe(u8[]((u8*)&w[0], memory.size_of(w)))
     for i in 0..<(usize)16:
         let j = i * 4
         w[i] = ((u32)input[j] << 24) | ((u32)input[j + 1] << 16) | ((u32)input[j + 2] << 8) | (u32)input[j + 3]
@@ -53,7 +54,7 @@ func block32(state: u32[], input: const u8[]):
 
 func block64(state: u64[], input: const u8[]):
     var w: u64[80]
-    defer secure.wipe(u8[]((u8*)&w[0], sizeof(w)))
+    defer secure.wipe(u8[]((u8*)&w[0], memory.size_of(w)))
     for i in 0..<(usize)16:
         var value: u64
         for j in 0..<(usize)8: value = (value << 8) | (u64)input[i * 8 + j]
@@ -134,11 +135,11 @@ pub struct Hash:
     func block_size() -> usize:
         return 64 if self.small() else 128
 
-    mutating func block(input: const u8[]):
+    func block(input: const u8[]):
         if self.small(): block32(self.h32, input)
         else: block64(self.h64, input)
 
-    pub mutating func update(input: const u8[]) -> !:
+    pub func update(input: const u8[]) -> !:
         if self.disposed: error(closed, "hash is closed or uninitialized")
         let length = try add_length(self.length, (u64)input.length, self.small())
         let size = self.block_size()
@@ -171,14 +172,14 @@ pub struct Hash:
 
     ## Consuming finalization avoids a key-derived snapshot in HMAC/HKDF.
     ## Short output is rejected before changing state or output.
-    pub mutating func finish(output: u8[]) -> usize!:
+    pub func finish(output: u8[]) -> usize!:
         let count = try self.digest_size()
         if output.length < count: error(invalid, "digest output buffer is too small")
         self.finalize(output, count)
         self.close()
         return count
 
-    mutating func finalize(output: u8[], count: usize):
+    func finalize(output: u8[], count: usize):
         let size = self.block_size()
         let tail: usize = 8 if self.small() else 16
         self.buffer[self.used] = 128
@@ -194,7 +195,7 @@ pub struct Hash:
             if self.small(): output[i] = (u8)(self.h32[i // 4] >> ((3 - i % 4) * 8))
             else: output[i] = (u8)(self.h64[i // 8] >> ((7 - i % 8) * 8))
 
-    pub mutating func reset() -> !:
+    pub func reset() -> !:
         if self.disposed: error(closed, "hash is closed or uninitialized")
         let kind = self.kind
         self.close()
@@ -202,8 +203,8 @@ pub struct Hash:
 
     ## Erases this exact object's bytes; not an erasure of compiler spills or
     ## copies made by callers. The closed marker is non-secret state.
-    pub mutating func close():
-        secure.wipe(u8[]((u8*)&self, sizeof(Hash)))
+    pub func close():
+        secure.wipe(u8[]((u8*)&self, memory.size_of(Hash)))
         self.disposed = true
 
 func initialize(kind: i64) -> Hash:

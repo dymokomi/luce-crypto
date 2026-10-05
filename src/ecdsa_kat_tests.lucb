@@ -57,8 +57,8 @@ func bearssl(directory: str, counts: Counts*) -> !:
     while lines.next():
         if try lines.is(0, "key"):
             let slot: usize = 0 if try lines.is(1, "p256") else (1 if try lines.is(1, "p384") else 2)
-            discard(try lines.decode(2, keys[slot * 199..<slot * 199 + 133]))
-            discard(try lines.decode(3, keys[slot * 199 + 133..<slot * 199 + 199]))
+            _ = try lines.decode(2, keys[slot * 199..<slot * 199 + 133])
+            _ = try lines.decode(3, keys[slot * 199 + 133..<slot * 199 + 199])
             continue
         if try lines.is(0, "p521"):
             counts.out_of_scope += 1
@@ -133,10 +133,10 @@ func cavp(directory: str, counts: Counts*) -> !:
         var s: u8[48]
         var message: u8[256]
         var digest: u8[64]
-        discard(try lines.decode(2, x[..<w]))
-        discard(try lines.decode(3, y[..<w]))
-        discard(try lines.decode(4, r[..<w]))
-        discard(try lines.decode(5, s[..<w]))
+        _ = try lines.decode(2, x[..<w])
+        _ = try lines.decode(3, y[..<w])
+        _ = try lines.decode(4, r[..<w])
+        _ = try lines.decode(5, s[..<w])
         let m = try lines.decode(6, message)
         let n = try message_digest(try lines.field(1), message[..<m], digest)
         assert(n != 0)
@@ -161,9 +161,9 @@ func openssl(directory: str, counts: Counts*) -> !:
         var digest: u8[64]
         if try lines.is(0, "keypair"):
             var d: u8[48]
-            discard(try lines.decode(3, d[..<w]))
-            discard(try lines.decode(4, x[..<w]))
-            discard(try lines.decode(5, y[..<w]))
+            _ = try lines.decode(3, d[..<w])
+            _ = try lines.decode(4, x[..<w])
+            _ = try lines.decode(5, y[..<w])
             var gx: u8[48]
             var gy: u8[48]
             if wide:
@@ -174,7 +174,7 @@ func openssl(directory: str, counts: Counts*) -> !:
             counts.passed += 1
         elif try lines.is(0, "digestsign"):
             var d: u8[32]
-            discard(try lines.decode(3, d))
+            _ = try lines.decode(3, d)
             let m = try lines.decode(4, input)
             let size = try lines.decode(5, signature)
             let n = try message_digest(try lines.field(2), input[..<m], digest)
@@ -189,8 +189,8 @@ func openssl(directory: str, counts: Counts*) -> !:
             assert(same(encoded[..<encoded_size], signature[..<size]), "OpenSSL RFC 6979 signature mismatch")
             counts.passed += 1
         else:
-            discard(try lines.decode(3, x[..<w]))
-            discard(try lines.decode(4, y[..<w]))
+            _ = try lines.decode(3, x[..<w])
+            _ = try lines.decode(4, y[..<w])
             let m = try lines.decode(5, input)
             let size = try lines.decode(6, signature)
             var n = m

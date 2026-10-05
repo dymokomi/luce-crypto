@@ -40,7 +40,7 @@ pub func expand(key: const u8[], info: const u8[], output: u8[], algorithm: str 
         try context.update(previous[..<used])
         try context.update(info)
         try context.update(counter)
-        discard(try context.finish(previous))
+        _ = try context.finish(previous)
         used = count
         let take = count if count < output.length - offset else output.length - offset
         for i in 0..<take: output[offset + i] = previous[i]
@@ -54,5 +54,5 @@ pub func derive(input: const u8[], salt: const u8[], info: const u8[], output: u
         error(sha2.invalid, "HKDF input/output overlap")
     var key: u8[64]
     defer secure.wipe(key)
-    discard(try extract(input, salt, key, algorithm))
+    _ = try extract(input, salt, key, algorithm)
     try expand(key[..<count], info, output, algorithm)

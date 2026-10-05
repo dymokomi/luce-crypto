@@ -1,6 +1,7 @@
 ## RFC 8439 Poly1305 one-time authenticator. Not a general MAC.
 import secure
 import sha2
+import memory
 
 func le32(bytes: const u8[], at: usize) -> u32:
     return (u32)bytes[at] | ((u32)bytes[at + 1] << 8) | ((u32)bytes[at + 2] << 16) | ((u32)bytes[at + 3] << 24)
@@ -51,8 +52,8 @@ pub func authenticate(key: const u8[], message: const u8[], tag: u8[]) -> !:
     if message.length > 16777216: error(sha2.length_exceeded, "Poly1305 message exceeds 16 MiB")
     var r: u64[5]
     var h: u64[5]
-    defer secure.wipe(u8[]((u8*)&r[0], sizeof(r)))
-    defer secure.wipe(u8[]((u8*)&h[0], sizeof(h)))
+    defer secure.wipe(u8[]((u8*)&r[0], memory.size_of(r)))
+    defer secure.wipe(u8[]((u8*)&h[0], memory.size_of(h)))
     let k0 = (u64)le32(key, 0)
     let k1 = (u64)le32(key, 4)
     let k2 = (u64)le32(key, 8)

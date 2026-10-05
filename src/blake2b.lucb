@@ -2,6 +2,7 @@
 ## Output size is a hash parameter (not truncation). No tree/personalized mode.
 import sha2 as errors
 import secure
+import memory
 
 let iv: u64[8] = [0x6a09e667f3bcc908, 0xbb67ae8584caa73b,
     0x3c6ef372fe94f82b, 0xa54ff53a5f1d36f1, 0x510e527fade682d1,
@@ -54,14 +55,14 @@ pub struct Hash:
     pub var high: u64
     pub var count: usize
 
-    mutating func block(final_block: bool):
+    func block(final_block: bool):
         let low = self.low +% (u64)self.used
         if low < self.low: self.high += 1
         self.low = low
         var v: u64[16]
         var message: u64[16]
-        defer secure.wipe(u8[]((u8*)&v[0], sizeof(v)))
-        defer secure.wipe(u8[]((u8*)&message[0], sizeof(message)))
+        defer secure.wipe(u8[]((u8*)&v[0], memory.size_of(v)))
+        defer secure.wipe(u8[]((u8*)&message[0], memory.size_of(message)))
         for i in 0..<(usize)8:
             v[i] = self.words[i]
             v[i + 8] = iv[i]
@@ -80,7 +81,7 @@ pub struct Hash:
         for i in 0..<(usize)8: self.words[i] ^= v[i] ^ v[i + 8]
         self.used = 0
 
-    pub mutating func update(input: const u8[]) -> !:
+    pub func update(input: const u8[]) -> !:
         if self.count == 0: error(errors.closed, "BLAKE2b is closed")
         ## Count the pending block as well; fail before mutation at 2^128 bytes.
         let pending = self.low +% (u64)self.used
@@ -96,7 +97,7 @@ pub struct Hash:
             self.used += take
             position += take
 
-    pub mutating func finish(output: u8[]) -> !:
+    pub func finish(output: u8[]) -> !:
         if self.count == 0: error(errors.closed, "BLAKE2b is closed")
         if output.length < self.count: error(errors.invalid, "BLAKE2b output is too short")
         defer self.close()
@@ -104,8 +105,8 @@ pub struct Hash:
         self.block(true)
         for i in 0..<self.count: output[i] = (u8)(self.words[i // 8] >> ((i % 8) * 8))
 
-    pub mutating func close():
-        secure.wipe(u8[]((u8*)&self, sizeof(Hash)))
+    pub func close():
+        secure.wipe(u8[]((u8*)&self, memory.size_of(Hash)))
 
 pub func make_hash(count: usize) -> Hash!:
     if count == 0 or count > 64: error(errors.invalid, "BLAKE2b output size must be 1-64")

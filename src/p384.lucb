@@ -61,10 +61,10 @@ func bn_sub(out: u32[], a: const u32[], b: const u32[]) -> u32:
 
 func mod_add(out: u32[], a: const u32[], b: const u32[], modulus: const u32[]):
     let carry = bn_add(out, a, b)
-    if carry != 0 or bn_cmp(out, modulus) >= 0: discard(bn_sub(out, out, modulus))
+    if carry != 0 or bn_cmp(out, modulus) >= 0: _ = bn_sub(out, out, modulus)
 
 func mod_sub(out: u32[], a: const u32[], b: const u32[], modulus: const u32[]):
-    if bn_sub(out, a, b) != 0: discard(bn_add(out, out, modulus))
+    if bn_sub(out, a, b) != 0: _ = bn_add(out, out, modulus)
 
 ## Montgomery product a * b * 2^-384 mod m (CIOS: multiply and reduce one
 ## limb at a time) for a, b < m.
@@ -91,7 +91,7 @@ func mont_mul(out: u32[], a: const u32[], b: const u32[], modulus: const u32[], 
         t[11] = (u32)(s & 0xffffffff)
         t[12] = t[13] + (u32)(s >> 32)
     if t[12] != 0 or bn_cmp(t[..<12], modulus) >= 0:
-        discard(bn_sub(t[..<12], t[..<12], modulus))
+        _ = bn_sub(t[..<12], t[..<12], modulus)
     bn_copy(out, t[..<12])
 
 func to_mont(out: u32[], value: const u32[], r2: const u32[], modulus: const u32[], n0: u32):
@@ -348,7 +348,7 @@ pub func verify(qx: const u8[], qy: const u8[], digest: const u8[],
     bytes_to_bn(plain_y, qy)
     if bn_cmp(plain_x, p_mod) >= 0 or bn_cmp(plain_y, p_mod) >= 0: return false
     if not on_curve(plain_x, plain_y): return false
-    if bn_cmp(e, n_mod) >= 0: discard(bn_sub(e, e, n_mod))
+    if bn_cmp(e, n_mod) >= 0: _ = bn_sub(e, e, n_mod)
     var w: u32[12]
     inverse(w, s, n_mod, n0_n, r2_n, one_n)
     var u1: u32[12]
@@ -366,7 +366,7 @@ pub func verify(qx: const u8[], qy: const u8[], digest: const u8[],
     if is_infinity(&sum): return false
     var x: u32[12]
     affine_x(x, &sum)
-    if bn_cmp(x, n_mod) >= 0: discard(bn_sub(x, x, n_mod))
+    if bn_cmp(x, n_mod) >= 0: _ = bn_sub(x, x, n_mod)
     return bn_cmp(x, r) == 0
 
 func bn_to_bytes(out: u8[], value: const u32[]):

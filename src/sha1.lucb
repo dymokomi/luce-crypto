@@ -1,13 +1,14 @@
 ## FIPS 180-4 SHA-1. Isolated legacy Git object IDs only. Never for secrets.
 import secure
 import sha2
+import memory
 
 func rotl(x: u32, n: u32) -> u32:
     return (x << n) | (x >> (32 - n))
 
 func block(state: u32[], input: const u8[]):
     var w: u32[80]
-    defer secure.wipe(u8[]((u8*)&w[0], sizeof(w)))
+    defer secure.wipe(u8[]((u8*)&w[0], memory.size_of(w)))
     for i in 0..<(usize)16:
         let j = i * 4
         w[i] = ((u32)input[j] << 24) | ((u32)input[j + 1] << 16) | ((u32)input[j + 2] << 8) | (u32)input[j + 3]
@@ -52,7 +53,7 @@ pub struct Hash:
     var length: u64
     var disposed: bool = true
 
-    pub mutating func start():
+    pub func start():
         self.close()
         self.h[0] = 0x67452301
         self.h[1] = 0xefcdab89
@@ -61,7 +62,7 @@ pub struct Hash:
         self.h[4] = 0xc3d2e1f0
         self.disposed = false
 
-    pub mutating func update(input: const u8[]) -> !:
+    pub func update(input: const u8[]) -> !:
         if self.disposed: error(sha2.closed, "SHA-1 is closed")
         if self.length > 0x1fffffffffffffff - (u64)input.length:
             error(sha2.length_exceeded, "SHA-1 message too long")
@@ -82,7 +83,7 @@ pub struct Hash:
             self.used += 1
         self.length += (u64)input.length
 
-    pub mutating func finish(output: u8[]) -> usize!:
+    pub func finish(output: u8[]) -> usize!:
         if self.disposed: error(sha2.closed, "SHA-1 is closed")
         if output.length < 20: error(sha2.invalid, "SHA-1 output buffer is too small")
         self.buffer[self.used] = 0x80
@@ -107,8 +108,8 @@ pub struct Hash:
         self.close()
         return 20
 
-    pub mutating func close():
-        secure.wipe(u8[]((u8*)&self.h[0], sizeof(self.h)))
+    pub func close():
+        secure.wipe(u8[]((u8*)&self.h[0], memory.size_of(self.h)))
         secure.wipe(self.buffer)
         self.used = 0
         self.length = 0

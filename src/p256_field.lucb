@@ -85,7 +85,7 @@ pub func sub(out: u32[], a: const u32[], b: const u32[], modulus: const Modulus*
     var difference: u32[8]
     var corrected: u32[8]
     let borrow = subtract(difference, a, b)
-    discard(add_raw(corrected, difference, modulus.m))
+    _ = add_raw(corrected, difference, modulus.m)
     choose(out, mask(borrow), corrected, difference)
 
 ## out = a * b * R^-1 mod m (CIOS) for a, b < m.
@@ -135,7 +135,7 @@ pub func invert(out: u32[], a: const u32[], modulus: const Modulus*):
     var exponent: u32[8]
     var two: u32[8]
     two[0] = 2
-    discard(subtract(exponent, modulus.m, two))
+    _ = subtract(exponent, modulus.m, two)
     var result: u32[8]
     for i in 0..<(usize)8:
         result[i] = modulus.one[i]

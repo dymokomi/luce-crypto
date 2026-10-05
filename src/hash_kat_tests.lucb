@@ -132,9 +132,9 @@ func bearssl_hmac(directory: str, tally: Tally*) -> !:
         let k = try lines.decode(1, key)
         let n = try lines.decode(2, data)
         let size = try lines.decode(3, expected)
-        discard(try mac(algorithm, key[..<k], data[..<n], 0, out))
+        _ = try mac(algorithm, key[..<k], data[..<n], 0, out)
         assert(same(out[..<size], expected[..<size]), "HMAC one-shot")
-        discard(try mac(algorithm, key[..<k], data[..<n], 1, out))
+        _ = try mac(algorithm, key[..<k], data[..<n], 1, out)
         assert(same(out[..<size], expected[..<size]), "HMAC byte-by-byte")
         tally.passed += 1
 
@@ -179,7 +179,7 @@ func wycheproof_hmac(directory: str, name: str, algorithm: str, tally: Tally*) -
         let k = try lines.decode(1, key)
         let n = try lines.decode(2, data)
         let t = try lines.decode(3, tag)
-        discard(try mac(algorithm, key[..<k], data[..<n], 0, out))
+        _ = try mac(algorithm, key[..<k], data[..<n], 0, out)
         let accepted = t == tag_size and same(out[..<tag_size], tag[..<t])
         if try lines.is(0, "valid"):
             assert(accepted, "valid Wycheproof HMAC rejected")
@@ -201,7 +201,7 @@ func wycheproof_hkdf(directory: str, name: str, algorithm: str, tally: Tally*) -
         let i = try lines.decode(1, ikm)
         let s = try lines.decode(2, salt)
         let f = try lines.decode(3, info)
-        discard(try lines.decode(4, size_bytes))
+        _ = try lines.decode(4, size_bytes)
         let size = ((usize)size_bytes[0] << 8) | (usize)size_bytes[1]
         let e = try lines.decode(5, expected)
         var accepted = true
@@ -278,7 +278,7 @@ func openssl_hmac(directory: str, tally: Tally*) -> !:
         let k = try lines.decode(1, key)
         let n = try lines.decode(2, data)
         let size = try lines.decode(3, expected)
-        discard(try mac(algorithm, key[..<k], data[..<n], 0, out))
+        _ = try mac(algorithm, key[..<k], data[..<n], 0, out)
         assert(same(out[..<size], expected[..<size]), "OpenSSL HMAC mismatch")
         tally.passed += 1
 
@@ -310,7 +310,7 @@ func openssl_hkdf(directory: str, tally: Tally*) -> !:
                 if size != try hmac_size(algorithm):
                     accepted = false
                 else:
-                    discard(try hkdf.extract(ikm[..<i], salt[..<s], out, algorithm))
+                    _ = try hkdf.extract(ikm[..<i], salt[..<s], out, algorithm)
             elif try lines.is(0, "expand"):
                 try hkdf.expand(ikm[..<i], info[..<f], out[..<size], algorithm)
             else:

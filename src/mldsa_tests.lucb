@@ -16,7 +16,7 @@ func decode_hex(text: str, out: u8[]) -> usize:
     return n
 
 pub func main(arguments: str[]) -> i32!:
-    discard(arguments)
+    _ = arguments
     var seed: u8[32]
     var pk: u8[1952]
     var sk: u8[4032]

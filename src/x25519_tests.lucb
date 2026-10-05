@@ -34,7 +34,7 @@ func diffie_hellman_vector() -> !:
     assert(same(first, shared) and same(second, shared))
 
 pub func main(arguments: str[]) -> i32!:
-    discard(arguments)
+    _ = arguments
     try scalar_vectors()
     try diffie_hellman_vector()
     print("PASS x25519 2 curve regression cases")

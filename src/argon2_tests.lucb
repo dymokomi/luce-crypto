@@ -49,19 +49,19 @@ struct Reader:
     var data: const u8[]
     var position: usize
 
-    mutating func take(count: usize) -> const u8[]:
+    func take(count: usize) -> const u8[]:
         assert(count <= self.data.length - self.position)
         let start = self.position
         self.position += count
         return self.data[start..<self.position]
 
-    mutating func number() -> usize:
+    func number() -> usize:
         let data = self.take(4)
         var result: u32
         for i in 0..<(usize)4: result |= (u32)data[i] << (i * 8)
         return (usize)result
 
-    mutating func blob() -> const u8[]:
+    func blob() -> const u8[]:
         let count = self.number()
         assert(count <= 1048576)
         return self.take(count)
@@ -69,7 +69,7 @@ struct Reader:
 func check_case(parameters: argon.Parameters, password: const u8[], salt: const u8[],
     key: const u8[], associated: const u8[], expected: const u8[], workers: usize) -> !:
     assert(expected.length <= 65536)
-    let output = try alloc u8[expected.length + 2] in memory.heap
+    let output = try new u8[expected.length + 2] --- in memory.heap
     defer free(output) in memory.heap
     for i in 0..<output.length: output[i] = 173
     try argon.derive(password, salt, output[1..<expected.length + 1], parameters,

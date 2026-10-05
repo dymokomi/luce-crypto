@@ -22,7 +22,7 @@ export noinline func probe_select(mask: u8, yes: u8, no: u8) -> u8:
     return secure.select_byte(mask, yes, no)
 
 pub func main(arguments: str[]) -> i32:
-    discard(arguments)
+    _ = arguments
     probe_dead()
     dead_pointer()
     var bytes: u8[34]

@@ -62,13 +62,13 @@ func ecdh_cases() -> !:
     y2[31] ^= 1
     var rejected = false
     ecdh(d1, x2, y2, s1) catch failure:
-        discard(failure)
+        _ = failure
         rejected = true
         recover ()
     assert(rejected, "off-curve ECDH peer accepted")
 
 pub func main(arguments: str[]) -> i32!:
-    discard(arguments)
+    _ = arguments
     try verify_rfc6979()
     try derive_rfc6979()
     try signing_roundtrip()

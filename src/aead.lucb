@@ -50,7 +50,7 @@ func prepare_key(key: const u8[], nonce: const u8[], subkey: u8[], n12: u8[]) ->
 
 func poly_key(subkey: const u8[], n12: const u8[], otk: u8[]) -> !:
     var zeros: u8[64]
-    discard(try chacha.xor(subkey, n12, 0, zeros, otk))
+    _ = try chacha.xor(subkey, n12, 0, zeros, otk)
 
 pub func seal(key: const u8[], nonce: const u8[], aad: const u8[], plaintext: const u8[], ciphertext: u8[], tag: u8[]) -> !:
     if ciphertext.length < plaintext.length or tag.length < 16:
@@ -65,9 +65,9 @@ pub func seal(key: const u8[], nonce: const u8[], aad: const u8[], plaintext: co
     defer secure.wipe(otk)
     try prepare_key(key, nonce, subkey, n12)
     try poly_key(subkey, n12, otk)
-    discard(try chacha.xor(subkey, n12, 1, plaintext, ciphertext))
+    _ = try chacha.xor(subkey, n12, 1, plaintext, ciphertext)
     let mac_len = aad.length + pad16(aad.length) + plaintext.length + pad16(plaintext.length) + 16
-    let mac = try alloc u8[mac_len] in memory.heap
+    let mac = try new u8[mac_len] --- in memory.heap
     defer free(mac) in memory.heap
     for i in 0..<mac_len: mac[i] = 0
     write_mac(aad, ciphertext[..<plaintext.length], mac)
@@ -89,7 +89,7 @@ pub func open(key: const u8[], nonce: const u8[], aad: const u8[], ciphertext: c
     try prepare_key(key, nonce, subkey, n12)
     try poly_key(subkey, n12, otk)
     let mac_len = aad.length + pad16(aad.length) + ciphertext.length + pad16(ciphertext.length) + 16
-    let mac = try alloc u8[mac_len] in memory.heap
+    let mac = try new u8[mac_len] --- in memory.heap
     defer free(mac) in memory.heap
     for i in 0..<mac_len: mac[i] = 0
     write_mac(aad, ciphertext, mac)
@@ -97,4 +97,4 @@ pub func open(key: const u8[], nonce: const u8[], aad: const u8[], ciphertext: c
     if not secure.equal(expected, tag[..<16]):
         for i in 0..<ciphertext.length: plaintext[i] = 0
         error(forged, "AEAD tag mismatch")
-    discard(try chacha.xor(subkey, n12, 1, ciphertext, plaintext))
+    _ = try chacha.xor(subkey, n12, 1, ciphertext, plaintext)

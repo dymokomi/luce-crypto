@@ -10,19 +10,19 @@ struct Reader:
     var data: const u8[]
     var position: usize
 
-    mutating func take(count: usize) -> const u8[]:
+    func take(count: usize) -> const u8[]:
         assert(count <= self.data.length - self.position)
         let start = self.position
         self.position += count
         return self.data[start..<self.position]
 
-    mutating func number() -> usize:
+    func number() -> usize:
         let data = self.take(4)
         var result: u32
         for i in 0..<(usize)4: result |= (u32)data[i] << (i * 8)
         return (usize)result
 
-    mutating func blob() -> const u8[]:
+    func blob() -> const u8[]:
         let count = self.number()
         assert(count <= 65536)
         return self.take(count)
@@ -31,10 +31,10 @@ func boundaries() -> !:
     var output: u8[65]
     for bad_size in [(usize)0, 65]:
         var rejected = false
-        discard(blake.make_hash(bad_size) catch failure:
+        _ = blake.make_hash(bad_size) catch failure:
             assert(failure.code == errors.invalid)
             rejected = true
-            recover blake.Hash())
+            recover blake.Hash()
         assert(rejected)
     var state = try blake.make_hash(64)
     state.low = 0xffffffffffffff80
@@ -48,7 +48,7 @@ func boundaries() -> !:
         assert(failure.code == errors.length_exceeded)
         rejected = true
     assert(rejected)
-    assert(secure.equal(u8[]((u8*)&state, sizeof(state)), u8[]((u8*)&before, sizeof(before))))
+    assert(secure.equal(u8[]((u8*)&state, memory.size_of(state)), u8[]((u8*)&before, memory.size_of(before))))
     try state.update(b"")
     try state.finish(output)
     assert(state.count == 0)
@@ -61,7 +61,7 @@ func boundaries() -> !:
     try state.update(output[..<1])
     assert(state.high == 8 and state.low == 0 and state.used == 1)
     state.close()
-    for byte in u8[]((u8*)&state, sizeof(state)): assert(byte == 0)
+    for byte in u8[]((u8*)&state, memory.size_of(state)): assert(byte == 0)
     rejected = false
     blake.expand(b"", output[..<0]) catch failure:
         assert(failure.code == errors.invalid)
@@ -70,7 +70,7 @@ func boundaries() -> !:
 
 func check_case(kind: usize, data: const u8[], expected: const u8[]) -> !:
     assert(expected.length > 0)
-    let output = try alloc u8[expected.length + 2] in memory.heap
+    let output = try new u8[expected.length + 2] --- in memory.heap
     defer free(output) in memory.heap
     for i in 0..<output.length: output[i] = 173
     if kind == 1:
@@ -102,7 +102,7 @@ func check_case(kind: usize, data: const u8[], expected: const u8[]) -> !:
             assert(rejected)
             try state.finish(output)
             assert(secure.equal(output[..<expected.length], expected))
-            for byte in u8[]((u8*)&state, sizeof(state)): assert(byte == 0)
+            for byte in u8[]((u8*)&state, memory.size_of(state)): assert(byte == 0)
             rejected = false
             state.update(b"") catch failure:
                 assert(failure.code == errors.closed)
@@ -110,7 +110,7 @@ func check_case(kind: usize, data: const u8[], expected: const u8[]) -> !:
             assert(rejected)
     ## Both one-shot functions consume the whole input before writing output.
     let capacity = data.length if data.length > expected.length else expected.length
-    let overlap = try alloc u8[capacity + 1] in memory.heap
+    let overlap = try new u8[capacity + 1] --- in memory.heap
     defer free(overlap) in memory.heap
     for i in 0..<data.length: overlap[i] = data[i]
     overlap[capacity] = 173

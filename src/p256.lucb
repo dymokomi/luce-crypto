@@ -13,6 +13,7 @@ import p256_field as f
 import p256_table as table
 import secure
 import sha2
+import memory
 
 let b_montgomery: u32[8] = [0x29c4bddf, 0xd89cdf62, 0x78843090, 0xacf005cd, 0xf7212ed6, 0xe5a220ab, 0x04874834, 0xdc30061d]
 
@@ -110,7 +111,7 @@ func multiply_point(p: const Point*, k: const u8[]) -> Point:
     var p2 = *p
     double(&p2)
     var p3 = *p
-    discard(add(&p3, &p2, false))
+    _ = add(&p3, &p2, false)
     var q = Point()
     var infinite: u32 = 0xffffffff
     for i in 0..<(usize)32:
@@ -123,7 +124,7 @@ func multiply_point(p: const Point*, k: const u8[]) -> Point:
             copy_if(&t, f.mask(eq32(bits, 2)), &p2)
             copy_if(&t, f.mask(eq32(bits, 3)), &p3)
             var u = q
-            discard(add(&u, &t, false))
+            _ = add(&u, &t, false)
             let nonzero = f.mask(eq32(bits, 0) ^ 1)
             copy_if(&q, nonzero & infinite, &t)
             copy_if(&q, nonzero & ~infinite, &u)
@@ -151,7 +152,7 @@ func multiply_generator_point(k: const u8[]) -> Point:
                     t.y[j] |= select & table.generator_window[entry * 16 + 8 + j]
             t.z = f.field.one
             var u = q
-            discard(add(&u, &t, true))
+            _ = add(&u, &t, true)
             let nonzero = f.mask(eq32(bits, 0) ^ 1)
             copy_if(&q, nonzero & infinite, &t)
             copy_if(&q, nonzero & ~infinite, &u)
@@ -324,7 +325,7 @@ pub func ecdh(d: const u8[], qx: const u8[], qy: const u8[], shared: u8[]) -> !:
     if not decode_point(qx, qy, &p):
         error(sha2.invalid, "P-256 ECDH peer key is not a curve point")
     var q = multiply_point(&p, d)
-    defer secure.wipe(u8[]((u8*)&q, sizeof(Point)))
+    defer secure.wipe(u8[]((u8*)&q, memory.size_of(Point)))
     if is_infinity(&q):
         error(sha2.invalid, "P-256 ECDH produced the point at infinity")
     var x: u32[8]
@@ -358,7 +359,7 @@ struct Nonces:
     var size: usize
     var algorithm: str
 
-    static func start(d: const u8[], digest: const u8[]) -> Nonces!:
+    func start(d: const u8[], digest: const u8[]) -> Nonces!:
         var state = Nonces(algorithm = try hash_for(digest))
         state.size = digest.length
         for i in 0..<state.size: state.value[i] = 1
@@ -376,31 +377,31 @@ struct Nonces:
             try context.update(sep)
             try context.update(d)
             try context.update(h_bytes)
-            discard(try context.finish(state.key))
-            discard(try hmac.authenticate(state.key[..<state.size], state.value[..<state.size], state.value, state.algorithm))
+            _ = try context.finish(state.key)
+            _ = try hmac.authenticate(state.key[..<state.size], state.value[..<state.size], state.value, state.algorithm)
         return state
 
     ## The next candidate k (RFC 6979 step h).
-    mutating func next(out: u8[]) -> !:
+    func next(out: u8[]) -> !:
         var produced: usize = 0
         var t: u8[64]
         while produced < 32:
-            discard(try hmac.authenticate(self.key[..<self.size], self.value[..<self.size], self.value, self.algorithm))
+            _ = try hmac.authenticate(self.key[..<self.size], self.value[..<self.size], self.value, self.algorithm)
             for i in 0..<self.size:
                 t[produced + i] = self.value[i]
             produced += self.size
         for i in 0..<(usize)32: out[i] = t[i]
 
     ## Step h.3 after a rejected candidate.
-    mutating func reseed() -> !:
+    func reseed() -> !:
         var zero: u8[1]
         var input: u8[65]
         for i in 0..<self.size: input[i] = self.value[i]
         input[self.size] = zero[0]
-        discard(try hmac.authenticate(self.key[..<self.size], input[..<self.size + 1], self.key, self.algorithm))
-        discard(try hmac.authenticate(self.key[..<self.size], self.value[..<self.size], self.value, self.algorithm))
+        _ = try hmac.authenticate(self.key[..<self.size], input[..<self.size + 1], self.key, self.algorithm)
+        _ = try hmac.authenticate(self.key[..<self.size], self.value[..<self.size], self.value, self.algorithm)
 
-    mutating func wipe():
+    func wipe():
         secure.wipe(self.key)
         secure.wipe(self.value)
 
@@ -446,9 +447,9 @@ pub func sign(d: const u8[], digest: const u8[], r_out: u8[], s_out: u8[]) -> !:
         f.mul(t, kinv, t, &f.order)
         var s: u32[8]
         f.from_montgomery(s, t, &f.order)
-        secure.wipe(u8[]((u8*)&km[0], sizeof(km)))
-        secure.wipe(u8[]((u8*)&kinv[0], sizeof(kinv)))
-        secure.wipe(u8[]((u8*)&dm[0], sizeof(dm)))
+        secure.wipe(u8[]((u8*)&km[0], memory.size_of(km)))
+        secure.wipe(u8[]((u8*)&kinv[0], memory.size_of(kinv)))
+        secure.wipe(u8[]((u8*)&dm[0], memory.size_of(dm)))
         if f.is_zero(r) == 1 or f.is_zero(s) == 1:
             try nonces.reseed()
             continue

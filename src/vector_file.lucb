@@ -15,7 +15,7 @@ pub struct Lines:
     var next_start: usize
 
     ## Load `directory`/`name`.
-    pub static func open(directory: str, name: str) -> Lines!:
+    pub func open(directory: str, name: str) -> Lines!:
         var path: u8[1024]
         if directory.length + name.length + 2 > path.length:
             error(sha2.invalid, "vector path is too long")
@@ -30,14 +30,14 @@ pub struct Lines:
         return Lines(contents = contents, text = contents.value)
 
     ## Release the file contents.
-    pub mutating func close():
+    pub func close():
         if let contents = self.contents:
             contents.release()
         self.contents = none
         self.text = self.text[..<0]
 
     ## Advance to the next nonempty line; false at the end of the file.
-    pub mutating func next() -> bool:
+    pub func next() -> bool:
         while self.next_start < self.text.length:
             self.line_start = self.next_start
             var end = self.line_start

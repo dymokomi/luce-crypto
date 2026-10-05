@@ -6,6 +6,7 @@
 ## Only encryption is provided, which is all CTR and GCM need.
 import secure
 import sha2
+import memory
 
 ## Expanded round keys in bitsliced form: eight words per round key.
 pub struct Key:
@@ -13,8 +14,8 @@ pub struct Key:
     var words: u64[120]
 
     ## Erase the round keys of this exact object.
-    pub mutating func wipe():
-        secure.wipe(u8[]((u8*)&self, sizeof(Key)))
+    pub func wipe():
+        secure.wipe(u8[]((u8*)&self, memory.size_of(Key)))
 
 ## The S-box applied to all 32 bytes held across the eight bit-planes `q`.
 ## q[7] holds the high bit (x0 in the paper's numbering), q[0] the low bit.
@@ -226,7 +227,7 @@ pub func expand(key: const u8[]) -> Key!:
     var out = Key(rounds = nk + 6)
     let total = (out.rounds + 1) * 4
     var schedule: u32[60]
-    defer secure.wipe(u8[]((u8*)&schedule[0], sizeof(schedule)))
+    defer secure.wipe(u8[]((u8*)&schedule[0], memory.size_of(schedule)))
     for i in 0..<nk:
         schedule[i] = load32(key, i * 4)
     var previous = schedule[nk - 1]
@@ -245,7 +246,7 @@ pub func expand(key: const u8[]) -> Key!:
             j = 0
             k += 1
     var q: u64[8]
-    defer secure.wipe(u8[]((u8*)&q[0], sizeof(q)))
+    defer secure.wipe(u8[]((u8*)&q[0], memory.size_of(q)))
     var i: usize = 0
     while i < total:
         interleave_in(q, 0, 4, schedule[i..<i + 4])
@@ -332,8 +333,8 @@ func encrypt_state(key: const Key*, q: u64[]):
 func encrypt4(key: const Key*, blocks: u8[]):
     var w: u32[16]
     var q: u64[8]
-    defer secure.wipe(u8[]((u8*)&w[0], sizeof(w)))
-    defer secure.wipe(u8[]((u8*)&q[0], sizeof(q)))
+    defer secure.wipe(u8[]((u8*)&w[0], memory.size_of(w)))
+    defer secure.wipe(u8[]((u8*)&q[0], memory.size_of(q)))
     for i in 0..<(usize)16:
         w[i] = load32(blocks, i * 4)
     for i in 0..<(usize)4:
