@@ -65,7 +65,7 @@ struct Digest:
     var narrow: sha1.Hash
     var legacy: bool
 
-    func start(algorithm: str) -> Digest!:
+    static func start(algorithm: str) -> Digest!:
         if algorithm == "sha1":
             return Digest(wide = sha2.Hash(), narrow = sha1.make(), legacy = true)
         return Digest(wide = try sha2.make_hash(algorithm), narrow = sha1.make())
@@ -160,7 +160,7 @@ func mgf1_xor(algorithm: str, seed: const u8[], mask: u8[]) -> !:
 ## same hash) and a salt of exactly `salt_size` bytes, or any length when
 ## `salt_size` is `any_salt`.
 pub func verify_pss(key: const PublicKey*, algorithm: str, digest: const u8[], signature: const u8[], salt_size: usize,
-    mask_algorithm: str = "") -> bool!:
+                    mask_algorithm: str = "") -> bool!:
     let size = try digest_size(algorithm)
     let mgf = algorithm if mask_algorithm.length == 0 else mask_algorithm
     _ = try digest_size(mgf)

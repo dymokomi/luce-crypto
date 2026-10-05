@@ -15,7 +15,7 @@ pub struct Natural:
 
     ## The number with big-endian bytes `bytes`, using exactly enough limbs
     ## for that many bytes (leading zero bytes still count toward `size`).
-    pub func from_bytes(bytes: const u8[]) -> Natural!:
+    pub static func from_bytes(bytes: const u8[]) -> Natural!:
         if bytes.length == 0 or bytes.length > max_limbs * 4:
             error(sha2.invalid, "integer must be 1 to 1024 bytes")
         var value = Natural(size = (bytes.length + 3) // 4)
@@ -73,7 +73,7 @@ pub struct Montgomery:
     var r2: Natural
 
     ## Precompute -n^-1 mod 2^32 and R^2 mod n.
-    pub func create(modulus: const Natural*) -> Montgomery!:
+    pub static func create(modulus: const Natural*) -> Montgomery!:
         if (modulus.limbs[0] & 1) == 0 or modulus.bit_length() < 2:
             error(sha2.invalid, "Montgomery modulus must be odd and greater than one")
         var context = Montgomery(modulus = *modulus)

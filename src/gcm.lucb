@@ -61,7 +61,7 @@ struct Ghash:
     var h0: u64
     var h1: u64
 
-    func start(h: const u8[]) -> Ghash:
+    static func start(h: const u8[]) -> Ghash:
         return Ghash(h1 = load64(h, 0), h0 = load64(h, 8))
 
     ## Absorb one 16-byte block: Y = (Y xor X) * H in GF(2^128).
@@ -164,7 +164,7 @@ func pre_counter(h: const u8[], nonce: const u8[], prefix: u8[]) -> u32:
 
 ## The tag of (aad, ciphertext), as long as `tag`, given H and J0.
 func compute_tag(key: const aes.Key*, h: const u8[], prefix: const u8[], counter: u32, aad: const u8[],
-    ciphertext: const u8[], tag: u8[]) -> !:
+                 ciphertext: const u8[], tag: u8[]) -> !:
     var state = Ghash.start(h)
     defer state.wipe()
     state.absorb(aad)

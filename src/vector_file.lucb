@@ -15,7 +15,7 @@ pub struct Lines:
     var next_start: usize
 
     ## Load `directory`/`name`.
-    pub func open(directory: str, name: str) -> Lines!:
+    pub static func open(directory: str, name: str) -> Lines!:
         var path: u8[1024]
         if directory.length + name.length + 2 > path.length:
             error(sha2.invalid, "vector path is too long")

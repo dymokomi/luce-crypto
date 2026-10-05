@@ -284,7 +284,7 @@ pub func multiply_generator(k: const u8[], out_x: u8[], out_y: u8[]) -> bool!:
 ## u*A + v*B for valid points and scalars below n (public data); false for
 ## the point at infinity (as BearSSL's `muladd`).
 pub func multiply_add(ax: const u8[], ay: const u8[], u: const u8[], bx: const u8[], by: const u8[], v: const u8[],
-    out_x: u8[], out_y: u8[]) -> bool!:
+                      out_x: u8[], out_y: u8[]) -> bool!:
     var a = Point()
     var b = Point()
     if not decode_point(ax, ay, &a) or not decode_point(bx, by, &b):
@@ -359,7 +359,7 @@ struct Nonces:
     var size: usize
     var algorithm: str
 
-    func start(d: const u8[], digest: const u8[]) -> Nonces!:
+    static func start(d: const u8[], digest: const u8[]) -> Nonces!:
         var state = Nonces(algorithm = try hash_for(digest))
         state.size = digest.length
         for i in 0..<state.size: state.value[i] = 1
