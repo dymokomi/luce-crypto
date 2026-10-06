@@ -1,0 +1,44 @@
+# What the gate runs on each platform (luce-base tools/gate.py, docs/CI.md): bash commands
+# in this checkout, in order, beside its dependencies at main, with LUCE_BASE and LUCE
+# naming the toolchain the gate built.
+tools = ["luce"]
+
+[macos]
+steps = [
+    # the gate's compilers where tools/bootstrap.py would build them
+    "mkdir -p build/toolchain && cp \"$LUCE_BASE\" \"$LUCE\" build/toolchain/",
+    # fixtures recomputed with the pinned test-only Argon2 reference
+    "python3 -m venv build/oracle-env && build/oracle-env/bin/python -m pip install -q --disable-pip-version-check --only-binary=:all: -r tests/oracle-requirements.txt",
+    "build/oracle-env/bin/python tests/argon_oracle.py",
+    # every compiler mode and a real Luce consumer
+    "python3 tests/run.py",
+]
+full = [
+    "python3 tests/sanitize.py",
+    # larger bounded file streams and Argon2id memory costs
+    "python3 tests/check_hashes.py build/native3/driver build/native3/file-driver --full",
+    "python3 tools/codegen_probe.py",
+    "python3 tests/check_argon.py build/native3/argon-driver --full",
+]
+
+[linux]
+steps = [
+    # the gate's compilers where tools/bootstrap.py would build them
+    "mkdir -p build/toolchain && cp \"$LUCE_BASE\" \"$LUCE\" build/toolchain/",
+    "python3 -m venv build/oracle-env && build/oracle-env/bin/python -m pip install -q --disable-pip-version-check --only-binary=:all: -r tests/oracle-requirements.txt",
+    "build/oracle-env/bin/python tests/argon_oracle.py",
+    "python3 tests/run.py",
+]
+full = [
+    "python3 tests/sanitize.py",
+    "python3 tests/check_hashes.py build/native3/driver build/native3/file-driver --full",
+    "python3 tools/codegen_probe.py",
+    "python3 tests/check_argon.py build/native3/argon-driver --full",
+]
+
+[windows]
+steps = [
+    # the gate's compilers where tools/bootstrap.py would build them
+    "mkdir -p build/toolchain && cp \"$LUCE_BASE\" \"$LUCE\" build/toolchain/",
+    "python tests/run.py",
+]
