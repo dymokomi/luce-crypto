@@ -11,12 +11,6 @@ import sha1
 import sha2
 import vector_file
 
-func same(a: const u8[], b: const u8[]) -> bool:
-    if a.length != b.length: return false
-    for i in 0..<a.length:
-        if a[i] != b[i]: return false
-    return true
-
 func text(field: const u8[]) -> str:
     return (str)field
 
@@ -80,7 +74,7 @@ func bearssl(directory: str, counts: Counts*) -> !:
             let result = try bignum.modular_power(&base, e[..<3], &modulus)
             var out: u8[128]
             try result.to_bytes(out[..<size])
-            assert(same(out[..<size], second[..<size]), "BearSSL RSA public operation mismatch")
+            assert(out[..<size] == second[..<size], "BearSSL RSA public operation mismatch")
         else:
             let h = try lines.decode(2, first)
             let k = try lines.decode(3, second)
@@ -108,7 +102,7 @@ func modpow(directory: str) -> usize!:
         let result = try bignum.modular_power(&base, e[..<size], &modulus)
         var out: u8[64]
         try result.to_bytes(out[..<size])
-        assert(same(out[..<size], expected[..<size]), "modular exponentiation mismatch")
+        assert(out[..<size] == expected[..<size], "modular exponentiation mismatch")
         count += 1
     return count
 

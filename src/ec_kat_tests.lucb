@@ -6,12 +6,6 @@ import p256
 import p384
 import vector_file
 
-func same(a: const u8[], b: const u8[]) -> bool:
-    if a.length != b.length: return false
-    for i in 0..<a.length:
-        if a[i] != b[i]: return false
-    return true
-
 ## Point multiply-add on either curve.
 func muladd(wide: bool, ax: const u8[], ay: const u8[], u: const u8[], bx: const u8[], by: const u8[], v: const u8[],
     x: u8[], y: u8[]) -> bool!:
@@ -52,7 +46,7 @@ func bearssl(directory: str, out_of_scope: usize*) -> usize!:
             var k: u8[32]
             k[31] = 0x10
             assert(try p256.multiply(k, p[1..<33], p[33..<65], x[..<32], y[..<32]))
-            assert(same(x[..<32], q[1..<33]) and same(y[..<32], q[33..<65]), "P-256 carry case mismatch")
+            assert(x[..<32] == q[1..<33] and y[..<32] == q[33..<65], "P-256 carry case mismatch")
             count += 1
             continue
         let wide = try lines.is(1, "secp384r1") or try lines.is(0, "secp384r1")
@@ -74,12 +68,12 @@ func bearssl(directory: str, out_of_scope: usize*) -> usize!:
             # u*A + v*B == (a*u + b*v)*G
             assert(try muladd(wide, ax[..<w], ay[..<w], u, bx[..<w], by[..<w], v, x[..<w], y[..<w]))
             assert(try generator(wide, values[4 * w..<5 * w], ex[..<w], ey[..<w]))
-            assert(same(x[..<w], ex[..<w]) and same(y[..<w], ey[..<w]), "multiply-add identity (1)")
+            assert(x[..<w] == ex[..<w] and y[..<w] == ey[..<w], "multiply-add identity (1)")
             # With B = u*G and v = a: u*A + a*B == 2*a*u*G.
             assert(try generator(wide, u, bx[..<w], by[..<w]))
             assert(try muladd(wide, ax[..<w], ay[..<w], u, bx[..<w], by[..<w], a, x[..<w], y[..<w]))
             assert(try generator(wide, values[5 * w..<6 * w], ex[..<w], ey[..<w]))
-            assert(same(x[..<w], ex[..<w]) and same(y[..<w], ey[..<w]), "multiply-add identity (2)")
+            assert(x[..<w] == ex[..<w] and y[..<w] == ey[..<w], "multiply-add identity (2)")
             # With v = -a the sum is the point at infinity.
             assert(not (try muladd(wide, ax[..<w], ay[..<w], u, bx[..<w], by[..<w], values[6 * w..<7 * w], x[..<w], y[..<w])))
             count += 1
@@ -89,7 +83,7 @@ func bearssl(directory: str, out_of_scope: usize*) -> usize!:
         _ = try lines.decode(1, k[..<w])
         _ = try lines.decode(2, point[..<1 + 2 * w])
         assert(try generator(wide, k[..<w], x[..<w], y[..<w]))
-        assert(same(x[..<w], point[1..<1 + w]) and same(y[..<w], point[1 + w..<1 + 2 * w]), "EC multiplication known answer")
+        assert(x[..<w] == point[1..<1 + w] and y[..<w] == point[1 + w..<1 + 2 * w], "EC multiplication known answer")
         count += 1
     return count
 
@@ -102,15 +96,15 @@ func keygen() -> usize!:
         var x: u8[32]
         var y: u8[32]
         try p256.keygen(d, x, y)
-        assert(not same(d, previous), "P-256 keygen stutter")
+        assert(d != previous, "P-256 keygen stutter")
         var ex: u8[32]
         var ey: u8[32]
         try p256.public_from_private(d, ex, ey)
-        assert(same(x, ex) and same(y, ey), "P-256 keygen public key mismatch")
+        assert(x == ex and y == ey, "P-256 keygen public key mismatch")
         var gx: u8[32]
         var gy: u8[32]
         assert(try p256.multiply_generator(d, gx, gy))
-        assert(same(x, gx) and same(y, gy))
+        assert(x == gx and y == gy)
         previous = d
         _ = round
     return 10
@@ -119,7 +113,7 @@ func keygen() -> usize!:
 ## and an uncompressed point; false for any other encoding.
 func spki_point(der: const u8[], x: u8[], y: u8[]) -> bool:
     let prefix = b"\x30\x59\x30\x13\x06\x07\x2a\x86\x48\xce\x3d\x02\x01\x06\x08\x2a\x86\x48\xce\x3d\x03\x01\x07\x03\x42\x00\x04"
-    if der.length != prefix.length + 64 or not same(der[..<prefix.length], prefix):
+    if der.length != prefix.length + 64 or der[..<prefix.length] != prefix:
         return false
     for i in 0..<(usize)32:
         x[i] = der[prefix.length + i]
@@ -167,7 +161,7 @@ func wycheproof(directory: str, name: str, spki: bool, valid: usize*, invalid: u
                 for i in 0..<(usize)32:
                     x[i] = public[1 + i]
                     y[i] = public[33 + i]
-        let agreed = usable and derive(scalar, x, y, out) and same(out, shared[..<s])
+        let agreed = usable and derive(scalar, x, y, out) and out == shared[..<s]
         if try lines.is(0, "valid"):
             assert(agreed, "valid Wycheproof ECDH case failed")
             *valid += 1
@@ -193,10 +187,10 @@ func openssl(directory: str) -> usize!:
         _ = try lines.decode(4, y)
         if try lines.is(0, "derive"):
             _ = try lines.decode(5, expected)
-            assert(derive(d, x, y, out) and same(out, expected) == try lines.is(1, "ok"), "OpenSSL ECDH mismatch")
+            assert(derive(d, x, y, out) and (out == expected) == try lines.is(1, "ok"), "OpenSSL ECDH mismatch")
         else:
             try p256.public_from_private(d, out, expected)
-            assert((same(out, x) and same(expected, y)) == try lines.is(1, "ok"), "OpenSSL key pair check failed")
+            assert((out == x and expected == y) == try lines.is(1, "ok"), "OpenSSL key pair check failed")
         count += 1
     return count
 

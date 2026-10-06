@@ -2,10 +2,6 @@ import sha2
 import crypto
 import thread
 
-func equal(a: const u8[], b: const u8[]):
-    assert(a.length == b.length)
-    for i in 0..<a.length: assert(a[i] == b[i])
-
 func worker(raw: void*?):
     _ = raw
     for iteration in 0..<32:
@@ -18,14 +14,14 @@ func worker(raw: void*?):
             var other = state
             state.update(b"\x00hash") catch failure: trap(failure.message)
             assert((state.digest(part) catch failure: trap(failure.message)) == count)
-            equal(whole[..<count], part[..<count])
+            assert(whole[..<count] == part[..<count])
             other.update(b"\x00hash") catch failure: trap(failure.message)
             assert((other.digest(part) catch failure: trap(failure.message)) == count)
-            equal(whole[..<count], part[..<count])
+            assert(whole[..<count] == part[..<count])
             let result = crypto.digest(b"concurrent\x00hash", algorithm) catch failure: trap(failure.message)
             defer result.release()
             let bytes = result.value().bytes() catch failure: trap(failure.message)
-            equal(bytes, whole[..<count])
+            assert(bytes == whole[..<count])
 
 pub func main(arguments: str[]) -> i32!:
     _ = arguments
@@ -47,20 +43,20 @@ pub func main(arguments: str[]) -> i32!:
         for i in count + 1..<out.length: assert(out[i] == 173)
         var another: u8[64]
         assert((try state.digest(another)) == count)
-        equal(out[1..<count + 1], another[..<count])
+        assert(out[1..<count + 1] == another[..<count])
         var branched = state
         try state.update(b"def")
         try branched.update(b"xyz")
         assert((try state.digest(another)) == count)
         _ = try sha2.digest(b"abcdef", out, algorithm)
-        equal(out[..<count], another[..<count])
+        assert(out[..<count] == another[..<count])
         _ = try branched.digest(another)
         _ = try sha2.digest(b"abcxyz", out, algorithm)
-        equal(out[..<count], another[..<count])
+        assert(out[..<count] == another[..<count])
         try state.reset()
         _ = try state.digest(another)
         _ = try sha2.digest(b"", out, algorithm)
-        equal(out[..<count], another[..<count])
+        assert(out[..<count] == another[..<count])
         state.close()
         state.close()
         rejected = false

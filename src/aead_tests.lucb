@@ -20,10 +20,6 @@ func decode_hex(text: str, out: u8[]) -> usize:
         i += 2
     return n
 
-func equal(a: const u8[], b: const u8[]):
-    assert(a.length == b.length)
-    for i in 0..<a.length: assert(a[i] == b[i], "mismatch")
-
 pub func main(arguments: str[]) -> i32!:
     _ = arguments
     var key: u8[32]
@@ -68,11 +64,11 @@ pub func main(arguments: str[]) -> i32!:
     decode_hex("d31a8d34648e60db7b86afbc53ef7ec2a4aded51296e08fea9e2b5a736ee62d63dbea45e8ca9671282fafb69da92728b1a71de0a9e060b2905d6a5b67ecd3b3692ddbd7f2d778b8c9803aee328091b58fab324e4fad675945585808b4831d7bc3ff4def08e4b7a9de576d26586cec64b6116", expect_ct)
     var expect_tag: u8[16]
     decode_hex("1ae10b594f09e26a7e902ecbd0600691", expect_tag)
-    equal(cipher[..<plain.length], expect_ct)
-    equal(aead_tag, expect_tag)
+    assert(cipher[..<plain.length] == expect_ct, "mismatch")
+    assert(aead_tag == expect_tag, "mismatch")
     var opened: u8[114]
     try aead.open(aead_key, aead_nonce, aad, cipher[..<plain.length], aead_tag, opened)
-    equal(opened[..<plain.length], plain)
+    assert(opened[..<plain.length] == plain, "mismatch")
     var bad = aead_tag
     bad[0] ^= 1
     var forged = false
@@ -90,14 +86,14 @@ pub func main(arguments: str[]) -> i32!:
     var xpt: u8[5]
     try aead.seal(xkey, xnonce, b"ad", b"hello", xct, xtag)
     try aead.open(xkey, xnonce, b"ad", xct, xtag, xpt)
-    equal(xpt, b"hello")
+    assert(xpt == b"hello", "mismatch")
     var sha_out: u8[20]
     try sha1.digest(b"abc", sha_out)
     var sha_expect: u8[20]
     decode_hex("a9993e364706816aba3e25717850c26c9cd0d89d", sha_expect)
-    equal(sha_out, sha_expect)
+    assert(sha_out == sha_expect, "mismatch")
     try sha1.digest(b"", sha_out)
     decode_hex("da39a3ee5e6b4b0d3255bfef95601890afd80709", sha_expect)
-    equal(sha_out, sha_expect)
+    assert(sha_out == sha_expect, "mismatch")
     print("PASS RFC 8439 ChaCha20/Poly1305 AEAD, XChaCha round-trip and SHA-1")
     return 0

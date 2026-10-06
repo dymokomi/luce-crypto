@@ -8,12 +8,6 @@
 import x25519
 import vector_file
 
-func same(a: const u8[], b: const u8[]) -> bool:
-    if a.length != b.length: return false
-    for i in 0..<a.length:
-        if a[i] != b[i]: return false
-    return true
-
 ## Iterate k, u <- X25519(k, u), k from 9 (RFC 7748 §5.2); returns k.
 func iterate(count: usize, out: u8[]):
     var k: u8[32]
@@ -42,7 +36,7 @@ func bearssl(directory: str) -> usize!:
         _ = try lines.decode(2, u)
         _ = try lines.decode(3, expected)
         try x25519.scalarmult(out, k, u)
-        assert(same(out, expected), "BearSSL X25519 known answer mismatch")
+        assert(out == expected, "BearSSL X25519 known answer mismatch")
         count += 1
     return count
 
@@ -67,7 +61,7 @@ func rfc7748(directory: str, full: bool, skipped: usize*) -> usize!:
             _ = try lines.decode(2, b)
             _ = try lines.decode(3, c)
             try x25519.scalarmult(out, a, b)
-            assert(same(out, c), "RFC 7748 5.2 mismatch")
+            assert(out == c, "RFC 7748 5.2 mismatch")
         elif try lines.is(0, "iterate"):
             let rounds = decimal(try lines.field(1))
             if rounds > 1000 and not full:
@@ -75,7 +69,7 @@ func rfc7748(directory: str, full: bool, skipped: usize*) -> usize!:
                 continue
             _ = try lines.decode(2, a)
             iterate(rounds, out)
-            assert(same(out, a), "RFC 7748 iteration mismatch")
+            assert(out == a, "RFC 7748 iteration mismatch")
         else:
             _ = try lines.decode(1, a)
             _ = try lines.decode(2, b)
@@ -83,13 +77,13 @@ func rfc7748(directory: str, full: bool, skipped: usize*) -> usize!:
             _ = try lines.decode(4, d)
             _ = try lines.decode(5, e)
             try x25519.scalarmult_base(out, a)
-            assert(same(out, b), "RFC 7748 6.1 Alice public key")
+            assert(out == b, "RFC 7748 6.1 Alice public key")
             try x25519.scalarmult_base(out, c)
-            assert(same(out, d), "RFC 7748 6.1 Bob public key")
+            assert(out == d, "RFC 7748 6.1 Bob public key")
             try x25519.scalarmult(out, a, d)
-            assert(same(out, e), "RFC 7748 6.1 Alice shared secret")
+            assert(out == e, "RFC 7748 6.1 Alice shared secret")
             try x25519.scalarmult(out, c, b)
-            assert(same(out, e), "RFC 7748 6.1 Bob shared secret")
+            assert(out == e, "RFC 7748 6.1 Bob shared secret")
         count += 1
     return count
 
@@ -104,7 +98,7 @@ func wycheproof(directory: str, valid: usize*, acceptable: usize*) -> !:
         assert(try lines.decode(1, public) == 32 and try lines.decode(2, private) == 32)
         _ = try lines.decode(3, shared)
         try x25519.scalarmult(out, private, public)
-        assert(same(out, shared), "Wycheproof X25519 mismatch")
+        assert(out == shared, "Wycheproof X25519 mismatch")
         if try lines.is(0, "valid"):
             *valid += 1
         else:
@@ -126,10 +120,10 @@ func openssl(directory: str) -> usize!:
             assert(try lines.is(1, "ok"))
             _ = try lines.decode(4, expected)
             try x25519.scalarmult(out, private, public)
-            assert(same(out, expected), "OpenSSL X25519 derive mismatch")
+            assert(out == expected, "OpenSSL X25519 derive mismatch")
         else:
             try x25519.scalarmult_base(out, private)
-            assert(same(out, public) == try lines.is(1, "ok"), "OpenSSL X25519 key pair check failed")
+            assert((out == public) == try lines.is(1, "ok"), "OpenSSL X25519 key pair check failed")
         count += 1
     return count
 

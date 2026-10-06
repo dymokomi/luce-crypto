@@ -24,15 +24,11 @@ struct Reader:
         assert(count <= 65536)
         return self.take(count)
 
-func equal(actual: const u8[], expected: const u8[]):
-    assert(actual.length == expected.length)
-    for i in 0..<actual.length: assert(actual[i] == expected[i])
-
 func mac_case(key: const u8[], data: const u8[], expected: const u8[], algorithm: str) -> !:
     var output: u8[66]
     for i in 0..<output.length: output[i] = 173
     let count = try crypto.authenticate(key, data, output[1..], algorithm)
-    equal(output[1..<count + 1], expected)
+    assert(output[1..<count + 1] == expected)
     assert(output[0] == 173)
     for i in count + 1..<output.length: assert(output[i] == 173)
     for offer in [(usize)1, 7, 64, 127, 4096]:
@@ -60,7 +56,7 @@ func mac_case(key: const u8[], data: const u8[], expected: const u8[], algorithm
             recover (usize)0
         assert(rejected)
         _ = try state.finish(output)
-        equal(output[..<count], expected)
+        assert(output[..<count] == expected)
         rejected = false
         state.update(b"") catch failure:
             assert(failure.code == crypto.closed)
@@ -83,17 +79,17 @@ func kdf_case(input: const u8[], salt: const u8[], info: const u8[], prk: const 
     var output: u8[16322]
     for i in 0..<output.length: output[i] = 173
     try crypto.hkdf(input, salt, info, output[1..<expected.length + 1], algorithm)
-    equal(output[1..<expected.length + 1], expected)
+    assert(output[1..<expected.length + 1] == expected)
     assert(output[0] == 173)
     for i in expected.length + 1..<output.length: assert(output[i] == 173)
     var key: u8[66]
     for i in 0..<key.length: key[i] = 173
     let count = try crypto.hkdf_extract(input, salt, key[1..], algorithm)
-    equal(key[1..<count + 1], prk)
+    assert(key[1..<count + 1] == prk)
     assert(key[0] == 173)
     for i in count + 1..<key.length: assert(key[i] == 173)
     try crypto.hkdf_expand(key[1..<count + 1], info, output[..<expected.length], algorithm)
-    equal(output[..<expected.length], expected)
+    assert(output[..<expected.length] == expected)
     crypto.wipe(key)
     crypto.wipe(output)
 

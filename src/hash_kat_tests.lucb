@@ -15,23 +15,17 @@ struct Tally:
     var out_of_scope: usize
     var rejected: usize
 
-func same(a: const u8[], b: const u8[]) -> bool:
-    if a.length != b.length: return false
-    for i in 0..<a.length:
-        if a[i] != b[i]: return false
-    return true
-
 ## The SHA-2 algorithm named by a vector field, or "" for any other.
 func sha2_name(name: const u8[]) -> str:
-    if same(name, b"sha224"): return "sha224"
-    if same(name, b"sha256"): return "sha256"
-    if same(name, b"sha384"): return "sha384"
-    if same(name, b"sha512"): return "sha512"
+    if name == b"sha224": return "sha224"
+    if name == b"sha256": return "sha256"
+    if name == b"sha384": return "sha384"
+    if name == b"sha512": return "sha512"
     return ""
 
 ## A SHA-1 or SHA-2 digest of `data` fed in pieces of `step` bytes (0: whole).
 func digest(name: const u8[], data: const u8[], step: usize, out: u8[]) -> usize!:
-    if same(name, b"sha1"):
+    if name == b"sha1":
         var state = sha1.make()
         try feed_sha1(&state, data, step)
         return try state.finish(out)
@@ -55,22 +49,22 @@ func feed_sha1(state: sha1.Hash*, data: const u8[], step: usize) -> !:
 func split_and_copy(name: const u8[], data: const u8[], expected: const u8[]) -> !:
     var out: u8[64]
     for u in 0..<data.length:
-        if same(name, b"sha1"):
+        if name == b"sha1":
             var first = sha1.make()
             try first.update(data[..<u])
             var second = first
             try first.update(data[u..])
             try second.update(data[u..])
-            assert(same(out[..<try first.finish(out)], expected), "SHA-1 split mismatch")
-            assert(same(out[..<try second.finish(out)], expected), "SHA-1 copy mismatch")
+            assert(out[..<try first.finish(out)] == expected, "SHA-1 split mismatch")
+            assert(out[..<try second.finish(out)] == expected, "SHA-1 copy mismatch")
         else:
             var first = try sha2.make_hash(sha2_name(name))
             try first.update(data[..<u])
             var second = first
             try first.update(data[u..])
             try second.update(data[u..])
-            assert(same(out[..<try first.digest(out)], expected), "SHA-2 split mismatch")
-            assert(same(out[..<try second.digest(out)], expected), "SHA-2 copy mismatch")
+            assert(out[..<try first.digest(out)] == expected, "SHA-2 split mismatch")
+            assert(out[..<try second.digest(out)] == expected, "SHA-2 copy mismatch")
             first.close()
             second.close()
 
@@ -82,27 +76,27 @@ func bearssl_hashes(directory: str, tally: Tally*) -> !:
     var out: u8[64]
     while lines.next():
         let name = try lines.field(0)
-        if same(name, b"md5"):
+        if name == b"md5":
             tally.out_of_scope += 1
             continue
         let size = try lines.decode(2, expected)
         if try lines.is(1, "million"):
             var block: u8[1000]
             for i in 0..<block.length: block[i] = 'a'
-            if same(name, b"sha1"):
+            if name == b"sha1":
                 var state = sha1.make()
                 for _ in 0..<(usize)1000: try state.update(block)
-                assert(same(out[..<try state.finish(out)], expected[..<size]), "SHA-1 million-a")
+                assert(out[..<try state.finish(out)] == expected[..<size], "SHA-1 million-a")
             else:
                 var million = try sha2.make_hash(sha2_name(name))
                 defer million.close()
                 for _ in 0..<(usize)1000: try million.update(block)
-                assert(same(out[..<try million.digest(out)], expected[..<size]), "SHA-2 million-a")
+                assert(out[..<try million.digest(out)] == expected[..<size], "SHA-2 million-a")
             tally.passed += 1
             continue
         let n = try lines.decode(1, data)
-        assert(same(out[..<try digest(name, data[..<n], 0, out)], expected[..<size]), "hash one-shot")
-        assert(same(out[..<try digest(name, data[..<n], 1, out)], expected[..<size]), "hash byte-by-byte")
+        assert(out[..<try digest(name, data[..<n], 0, out)] == expected[..<size], "hash one-shot")
+        assert(out[..<try digest(name, data[..<n], 1, out)] == expected[..<size], "hash byte-by-byte")
         try split_and_copy(name, data[..<n], expected[..<size])
         tally.passed += 1
 
@@ -133,9 +127,9 @@ func bearssl_hmac(directory: str, tally: Tally*) -> !:
         let n = try lines.decode(2, data)
         let size = try lines.decode(3, expected)
         _ = try mac(algorithm, key[..<k], data[..<n], 0, out)
-        assert(same(out[..<size], expected[..<size]), "HMAC one-shot")
+        assert(out[..<size] == expected[..<size], "HMAC one-shot")
         _ = try mac(algorithm, key[..<k], data[..<n], 1, out)
-        assert(same(out[..<size], expected[..<size]), "HMAC byte-by-byte")
+        assert(out[..<size] == expected[..<size], "HMAC byte-by-byte")
         tally.passed += 1
 
 func bearssl_hkdf(directory: str, tally: Tally*) -> !:
@@ -158,7 +152,7 @@ func bearssl_hkdf(directory: str, tally: Tally*) -> !:
         let f = try lines.decode(3, info)
         let size = try lines.decode(4, expected)
         try hkdf.derive(ikm[..<i], salt[..<s], info[..<f], out[..<size], algorithm)
-        assert(same(out[..<size], expected[..<size]), "HKDF mismatch")
+        assert(out[..<size] == expected[..<size], "HKDF mismatch")
         tally.passed += 1
 
 func wycheproof_hmac(directory: str, name: str, algorithm: str, tally: Tally*) -> !:
@@ -180,7 +174,7 @@ func wycheproof_hmac(directory: str, name: str, algorithm: str, tally: Tally*) -
         let n = try lines.decode(2, data)
         let t = try lines.decode(3, tag)
         _ = try mac(algorithm, key[..<k], data[..<n], 0, out)
-        let accepted = t == tag_size and same(out[..<tag_size], tag[..<t])
+        let accepted = t == tag_size and out[..<tag_size] == tag[..<t]
         if try lines.is(0, "valid"):
             assert(accepted, "valid Wycheproof HMAC rejected")
             tally.passed += 1
@@ -210,7 +204,7 @@ func wycheproof_hkdf(directory: str, name: str, algorithm: str, tally: Tally*) -
             accepted = false
             recover ()
         if try lines.is(0, "valid"):
-            assert(accepted and e == size and same(out[..<size], expected[..<e]), "valid Wycheproof HKDF failed")
+            assert(accepted and e == size and out[..<size] == expected[..<e], "valid Wycheproof HKDF failed")
             tally.passed += 1
         else:
             assert(not accepted, "invalid Wycheproof HKDF size accepted")
@@ -232,7 +226,7 @@ func openssl_digest(directory: str, tally: Tally*) -> !:
         let name = try lines.field(0)
         let size = try lines.decode(1, expected)
         var one = sha1.make()
-        var two = try sha2.make_hash(sha2_name(name) if not same(name, b"sha1") else "sha256")
+        var two = try sha2.make_hash(sha2_name(name) if name != b"sha1" else "sha256")
         defer two.close()
         var index: usize = 2
         while index < lines.count():
@@ -249,15 +243,15 @@ func openssl_digest(directory: str, tally: Tally*) -> !:
             let count = decimal(text[parts[1] + 1..])
             for _ in 0..<count:
                 for _ in 0..<copies:
-                    if same(name, b"sha1"):
+                    if name == b"sha1":
                         try one.update(chunk[..<n])
                     else:
                         try two.update(chunk[..<n])
             index += 1
-        if same(name, b"sha1"):
-            assert(same(out[..<try one.finish(out)], expected[..<size]), "OpenSSL SHA-1 mismatch")
+        if name == b"sha1":
+            assert(out[..<try one.finish(out)] == expected[..<size], "OpenSSL SHA-1 mismatch")
         else:
-            assert(same(out[..<try two.digest(out)], expected[..<size]), "OpenSSL SHA-2 mismatch")
+            assert(out[..<try two.digest(out)] == expected[..<size], "OpenSSL SHA-2 mismatch")
         tally.passed += 1
 
 ## OpenSSL evpmac_common.txt HMAC stanzas over SHA-1/SHA-2 (SHA-1 HMAC is
@@ -279,7 +273,7 @@ func openssl_hmac(directory: str, tally: Tally*) -> !:
         let n = try lines.decode(2, data)
         let size = try lines.decode(3, expected)
         _ = try mac(algorithm, key[..<k], data[..<n], 0, out)
-        assert(same(out[..<size], expected[..<size]), "OpenSSL HMAC mismatch")
+        assert(out[..<size] == expected[..<size], "OpenSSL HMAC mismatch")
         tally.passed += 1
 
 ## OpenSSL evpkdf_hkdf.txt and evppkey_kdf_hkdf.txt: extract-and-expand,
@@ -316,7 +310,7 @@ func openssl_hkdf(directory: str, tally: Tally*) -> !:
             else:
                 try hkdf.derive(ikm[..<i], salt[..<s], info[..<f], out[..<size], algorithm)
         if ok:
-            assert(accepted and same(out[..<size], expected[..<size]), "OpenSSL HKDF mismatch")
+            assert(accepted and out[..<size] == expected[..<size], "OpenSSL HKDF mismatch")
             tally.passed += 1
         else:
             assert(not accepted, "OpenSSL HKDF error case accepted")

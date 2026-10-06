@@ -10,18 +10,12 @@ import sha1
 import sha2
 import vector_file
 
-func same(a: const u8[], b: const u8[]) -> bool:
-    if a.length != b.length: return false
-    for i in 0..<a.length:
-        if a[i] != b[i]: return false
-    return true
-
 ## The digest of `message` under a vector's hash name; zero when unsupported.
 func message_digest(name: const u8[], message: const u8[], out: u8[]) -> usize!:
-    if same(name, b"sha1"):
+    if name == b"sha1":
         return try sha1.digest(message, out)
     for candidate in ["sha224", "sha256", "sha384", "sha512"]:
-        if same(name, candidate.bytes):
+        if name == candidate.bytes:
             return try sha2.digest(message, out, candidate)
     return 0
 
@@ -86,10 +80,10 @@ func bearssl(directory: str, counts: Counts*) -> !:
             var r: u8[32]
             var s: u8[32]
             try p256.sign(keys[133..<165], digest[..<n], r, s)
-            assert(same(r, raw[..<32]) and same(s, raw[32..<64]), "RFC 6979 P-256 signature mismatch")
+            assert(r == raw[..<32] and s == raw[32..<64], "RFC 6979 P-256 signature mismatch")
             var encoded: u8[80]
             let size = vector_file.ecdsa_to_der(r, s, encoded)
-            assert(same(encoded[..<size], der[..<der_size]), "RFC 6979 P-256 DER mismatch")
+            assert(encoded[..<size] == der[..<der_size], "RFC 6979 P-256 DER mismatch")
         elif not wide:
             counts.out_of_scope += 1
         counts.passed += 1
@@ -170,7 +164,7 @@ func openssl(directory: str, counts: Counts*) -> !:
                 assert(try p384.multiply_generator(d[..<w], gx[..<w], gy[..<w]))
             else:
                 assert(try p256.multiply_generator(d[..<w], gx[..<w], gy[..<w]))
-            assert(same(gx[..<w], x[..<w]) and same(gy[..<w], y[..<w]), "OpenSSL EC key pair mismatch")
+            assert(gx[..<w] == x[..<w] and gy[..<w] == y[..<w], "OpenSSL EC key pair mismatch")
             counts.passed += 1
         elif try lines.is(0, "digestsign"):
             var d: u8[32]
@@ -186,7 +180,7 @@ func openssl(directory: str, counts: Counts*) -> !:
             try p256.sign(d, digest[..<n], r, s)
             var encoded: u8[80]
             let encoded_size = vector_file.ecdsa_to_der(r, s, encoded)
-            assert(same(encoded[..<encoded_size], signature[..<size]), "OpenSSL RFC 6979 signature mismatch")
+            assert(encoded[..<encoded_size] == signature[..<size], "OpenSSL RFC 6979 signature mismatch")
             counts.passed += 1
         else:
             _ = try lines.decode(3, x[..<w])
