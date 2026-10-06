@@ -122,8 +122,7 @@ See [Argon2id APIs, admission budgets and cancellation](docs/ARGON2ID.md).
 
 ## Tests
 
-Sibling compiler sources are pinned in `bootstrap/BASE` and `bootstrap/LUCE`.
-They are read-only inputs; generated builds stay under this repository's ignored
+Sibling compiler sources (`../luce-base`, `../luce`; main in CI) are read-only inputs; generated builds stay under this repository's ignored
 `build/` directory. Supported test hosts: macOS arm64 and Linux x86_64.
 
 ```sh

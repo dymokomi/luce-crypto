@@ -44,7 +44,7 @@ def main():
     assert "volatile uint8_t* lb_destination" in text
     assert "const volatile uint8_t* lb_a" in text and "const volatile uint8_t* lb_b" in text
     report = {"machine": platform.machine(), "system": platform.system(),
-              "base_pin": (ROOT / "bootstrap/BASE").read_text().strip(),
+              "base_commit": subprocess.check_output(["git", "-C", str(ROOT.parent / "luce-base"), "rev-parse", "HEAD"], text=True).strip(),
               "scope": "body retention and C volatile qualifiers only; instruction dataflow requires human review",
               "assemblies": {}, "native_noinline_callee_retained": {}}
     for mode in ("native0", "native1", "native2", "native3", "c", "c-release", "c-O3"):
