@@ -215,7 +215,7 @@ func openssl(directory: str, passed: usize*, refused: usize*) -> !:
 
 ## Optional argument: the vector directory (default tests/vectors).
 pub func main(arguments: str[]) -> i32!:
-    let directory = arguments[1] if arguments.length > 1 else "../vectors"
+    let directory = arguments[1] if arguments.length > 1 else "tests/vectors"
     let chacha_count = try bearssl_chacha(directory)
     let aead_count = try bearssl_aead(directory)
     let rfc = try rfc8439(directory)
