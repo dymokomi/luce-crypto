@@ -52,11 +52,10 @@ correctness/resource cases, not calibrated defaults or evidence of linear scalin
 
 ```sh
 python3 -m venv build/oracle-env
-build/oracle-env/bin/python -m pip install --only-binary=:all: -r tests/oracle-requirements.txt
-build/oracle-env/bin/python tests/argon_oracle.py
-python3 tests/run.py
-python3 tests/sanitize.py
-python3 tests/check_argon.py build/native3/argon-driver --full
+build/oracle-env/bin/python -m pip install --only-binary=:all: -r tests/oracles/oracle-requirements.txt
+build/oracle-env/bin/python tests/oracles/argon_oracle.py
+luc test
+(cd tests/oracles && python3 check_argon.py ../../build/tests/oracles/drivers/argon2 --full)
 python3 tools/codegen_probe.py
 ```
 

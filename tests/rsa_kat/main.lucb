@@ -196,7 +196,7 @@ func openssl(directory: str, counts: Counts*) -> !:
 
 ## Optional argument: the vector directory (default tests/vectors).
 pub func main(arguments: str[]) -> i32!:
-    let directory = arguments[1] if arguments.length > 1 else "tests/vectors"
+    let directory = arguments[1] if arguments.length > 1 else "../vectors"
     var kat = Counts()
     try bearssl(directory, &kat)
     let powers = try modpow(directory)

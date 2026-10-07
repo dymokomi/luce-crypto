@@ -334,7 +334,7 @@ func openssl(directory: str, passed: usize*, failing: usize*, refused: usize*) -
 
 ## Optional argument: the vector directory (default tests/vectors).
 pub func main(arguments: str[]) -> i32!:
-    let directory = arguments[1] if arguments.length > 1 else "tests/vectors"
+    let directory = arguments[1] if arguments.length > 1 else "../vectors"
     var out_of_scope: usize = 0
     let blocks = try block_kats(directory)
     let carlo = try monte_carlo(directory, &out_of_scope)

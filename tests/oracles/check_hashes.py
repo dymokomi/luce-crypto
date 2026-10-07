@@ -8,7 +8,7 @@ import subprocess
 import sys
 import tempfile
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 ALGORITHMS = ("sha256", "sha384", "sha512")
 MAGIC = b"LCSHA01\0"
 

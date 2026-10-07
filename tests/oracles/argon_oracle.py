@@ -7,7 +7,7 @@ from pathlib import Path
 import random
 
 VERSIONS = {"argon2-cffi": "25.1.0", "argon2-cffi-bindings": "25.1.0", "cffi": "2.0.0", "pycparser": "3.0"}
-FIXTURE = Path(__file__).resolve().parent / "vectors/argon2id.json"
+FIXTURE = Path(__file__).resolve().parents[1] / "vectors/argon2id.json"
 
 
 def reference(case, threads=1):

@@ -122,27 +122,27 @@ See [Argon2id APIs, admission budgets and cancellation](docs/ARGON2ID.md).
 
 ## Tests
 
-Sibling compiler sources (`../luce-base`, `../luce`; main in CI) are read-only inputs; generated builds stay under this repository's ignored
-`build/` directory. Supported test hosts: macOS arm64 and Linux x86_64.
-
 ```sh
-python3 tools/bootstrap.py
-python3 tests/run.py
-python3 tests/sanitize.py
-python3 tests/check_hashes.py build/native3/driver build/native3/file-driver --full
-python3 tests/check_argon.py build/native3/argon-driver --full
-python3 tools/codegen_probe.py
+luc test
 ```
 
-Or supply `--base /path/to/luce-base --luce /path/to/luce` to `tests/run.py`.
-The runner builds and executes every vector program in all six modes and under
-the sanitizers (see Validation above). Vector files live under `tests/vectors/`
-and are regenerated from local reference checkouts (kept out of the
-repository) by `tools/bearssl_vectors.py`, `tools/wycheproof.py`,
-`tools/openssl_vectors.py`, `tools/rfc_vectors.py` and `tools/cavp_vectors.py`;
-each directory records the SHA-256 of its sources. The tests are not a
-side-channel audit. Compiler caches default to `build/cache` (`LUCE_CACHE` can
-override this).
+`luc test` runs every program under `tests/`: the regression programs (`tests/x25519`,
+`tests/keyed`, `tests/argon2_failures`, ...), the vector programs (`tests/hash_kat`,
+`tests/gcm`, `tests/rsa_kat`, ...), each reading `tests/vectors/`, the Luce consumer
+`tests/facade`, and `tests/oracles`, which builds the drivers in `tests/oracles/drivers/` and
+checks them against Python's hashlib/hmac, the pinned Argon2id fixture and OpenSSL's ML-DSA-65.
+The full corpora run by hand from `tests/oracles/` once `luc test` built the drivers:
+
+```sh
+cd tests/oracles
+python3 check_hashes.py ../../build/tests/oracles/drivers/hash ../../build/tests/oracles/drivers/file --full
+python3 check_argon.py ../../build/tests/oracles/drivers/argon2 --full
+```
+
+Vector files live under `tests/vectors/` and are regenerated from local reference checkouts
+(kept out of the repository) by `tools/bearssl_vectors.py`, `tools/wycheproof.py`,
+`tools/openssl_vectors.py`, `tools/rfc_vectors.py` and `tools/cavp_vectors.py`; each
+directory records the SHA-256 of its sources. The tests are not a side-channel audit.
 See [validation](docs/VALIDATION.md) for measured scope and exclusions, and
 [provenance](NOTICE.md) for standards and unchanged NIST fixtures.
 The committed Argon2id fixture can additionally be regenerated/verified against
